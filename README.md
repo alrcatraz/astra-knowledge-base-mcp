@@ -90,4 +90,3 @@ SQLite (.db file — ~/.astra/knowledge-base.db)
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
