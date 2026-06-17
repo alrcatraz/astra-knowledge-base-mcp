@@ -81,11 +81,17 @@ SQLite (.db file — ~/.astra/knowledge-base.db)
     └── chunks_fts           ← FTS5 virtual table (auto-synced)
 ```
 
-## Project Metrics
+## Related
 
-<p align="center">
-  <img src="https://github-readme-stats.vercel.app/api/pin/?username=alrcatraz&repo=astra-knowledge-base-mcp&show_owner=true&theme=default" alt="Repo card" />
-</p>
+- [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) — ecosystem portal
+- [Hermes Agent](https://hermes-agent.nousresearch.com) — AI agent framework
+- [MCP](https://modelcontextprotocol.io) — Model Context Protocol
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
 
 <p align="center">
   <a href="https://star-history.com/#alrcatraz/astra-knowledge-base-mcp&Date">
@@ -96,13 +102,3 @@ SQLite (.db file — ~/.astra/knowledge-base.db)
     </picture>
   </a>
 </p>
-
-## Related
-
-- [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) — ecosystem portal
-- [Hermes Agent](https://hermes-agent.nousresearch.com) — AI agent framework
-- [MCP](https://modelcontextprotocol.io) — Model Context Protocol
-
-## License
-
-MIT — see [LICENSE](LICENSE).
