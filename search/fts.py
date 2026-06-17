@@ -1,87 +1,93 @@
-"""PostgreSQL full-text search engine."""
+"""SQLite FTS5 full-text search engine."""
 
-from db import _sanitize, get_connection
+import json
+import sqlite3
 from .engine import SearchEngine
+from db import get_connection
 
 
 class FTSEngine(SearchEngine):
-    """Search engine using PostgreSQL to_tsvector / to_tsquery FTS."""
+    """Search engine using SQLite FTS5 full-text search."""
 
     def search(self, query, kb_names=None, limit=10):
-        """Full-text search across enabled knowledge bases."""
+        """Full-text search across knowledge bases using FTS5."""
         from kb_manager import get_enabled_kb_names
 
         targets = kb_names or get_enabled_kb_names()
-        if not targets:
+        if not targets or not query.strip():
             return []
 
-        tsquery_str = _build_tsquery(query)
-        if not tsquery_str:
+        # Build FTS5 query: prefix matching for each word
+        fts_query = _build_fts5_query(query)
+        if not fts_query:
             return []
 
-        parts = []
-        params = []
-        for kb in targets:
-            safe = _sanitize(kb)
-            parts.append(
-                f"""(
-                    SELECT {self._rank_expr(safe, tsquery_str)} AS score,
-                           {self._headline_expr(safe, tsquery_str)} AS headline,
-                           id, title, content, source, tags, %s AS kb
-                    FROM kb_{safe}.chunks
-                    WHERE search_vec @@ to_tsquery('simple', %s)
-                    ORDER BY score DESC
-                    LIMIT %s
-                )"""
-            )
-            params.extend([kb, tsquery_str, limit])
-
-        if not parts:
-            return []
-
-        if len(parts) > 1:
-            sql = " UNION ALL ".join(parts) + " ORDER BY score DESC LIMIT %s"
-            params.append(limit)
-        else:
-            sql = parts[0]
+        placeholders = ",".join("?" for _ in targets)
+        sql = f"""\
+            SELECT c.id, c.kb_name, c.title, c.content, c.source, c.tags,
+                   rank AS score
+            FROM chunks_fts
+            JOIN chunks c ON c.id = chunks_fts.rowid
+            WHERE chunks_fts MATCH ?
+              AND c.kb_name IN ({placeholders})
+            ORDER BY rank
+            LIMIT ?
+        """
 
         results = []
         with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                for row in cur.fetchall():
-                    results.append({
-                        "kb": row[7],
-                        "title": row[3],
-                        "content": row[5] or row[4][:500],
-                        "score": round(float(row[0]), 4),
-                        "source": row[5],
-                        "tags": row[6] if isinstance(row[6], list) else [],
-                        "headline": row[1],
-                    })
+            cur = conn.execute(sql, [fts_query, *targets, limit])
+            for row in cur.fetchall():
+                tags = _parse_tags(row["tags"])
+                results.append({
+                    "kb": row["kb_name"],
+                    "title": row["title"],
+                    "content": row["content"],
+                    "score": _fts_rank_to_score(row["score"]),
+                    "source": row["source"],
+                    "tags": tags,
+                })
 
         return results
 
-    @staticmethod
-    def _rank_expr(schema: str, tsquery: str) -> str:
-        return (
-            f"ts_rank(kb_{schema}.chunks.search_vec, "
-            f"to_tsquery('simple', '{tsquery}'), 32)"
-        )
 
-    @staticmethod
-    def _headline_expr(schema: str, tsquery: str) -> str:
-        return (
-            f"ts_headline('simple', kb_{schema}.chunks.content, "
-            f"to_tsquery('simple', '{tsquery}'), 'MaxWords=50, MinWords=20')"
-        )
-
-
-def _build_tsquery(query: str) -> str:
-    """Build a tsquery string from a natural language query."""
+def _build_fts5_query(query: str) -> str:
+    """Convert natural language query to FTS5 query syntax.
+    
+    FTS5 supports:
+      - word: exact match
+      - word*: prefix match
+      - word1 AND word2: both required
+      - "phrase": exact phrase
+    """
     tokens = []
-    for word in query.replace("'", "''").split():
-        word = word.strip().lower()
+    for word in query.strip().lower().split():
+        word = word.strip("'\"")
         if len(word) > 1:
-            tokens.append(f"{word}:*")
-    return " & ".join(tokens) if tokens else "%"
+            tokens.append(f"{word}*")
+        elif word:
+            tokens.append(word)
+
+    if not tokens:
+        return ""
+
+    return " AND ".join(tokens)
+
+
+def _fts_rank_to_score(rank: float) -> float:
+    """Convert FTS5 rank (negative = better match) to a 0-1 score.
+    
+    FTS5 rank is typically negative for matches. We invert and
+    normalize so higher = better, matching the original API.
+    """
+    return round(-rank, 4) if rank < 0 else round(1.0 / (1.0 + rank), 4)
+
+
+def _parse_tags(tags_json: str) -> list[str]:
+    """Parse tags from JSON string stored in SQLite."""
+    if not tags_json:
+        return []
+    try:
+        return json.loads(tags_json) if isinstance(tags_json, str) else list(tags_json)
+    except (json.JSONDecodeError, TypeError):
+        return []

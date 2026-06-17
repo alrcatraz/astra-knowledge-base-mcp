@@ -2,7 +2,7 @@
 """Astra Knowledge Base MCP Server.
 
 Provides tools for AI agents to manage and search multi-tenant knowledge bases
-backed by PostgreSQL + pgvector FTS.
+backed by SQLite + FTS5 full-text search.
 
 Tools:
   kb_list       — List all knowledge bases
@@ -22,8 +22,8 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 
-from db import get_connection
-from kb_manager import create_kb, delete_kb, enable_kb, disable_kb, list_kbs
+from db import get_connection, init_db
+from kb_manager import create_kb, delete_kb, enable_kb, disable_kb, list_kbs, add_chunks
 from search.fts import FTSEngine
 from ingestion.text import TextIngestor
 
@@ -175,19 +175,8 @@ async def handle_call_tool(
 
 def _store_chunks(kb_name: str, chunks: list[dict]) -> int:
     """Insert chunks into a knowledge base. Returns count."""
-    from db import _sanitize
-    safe = _sanitize(kb_name)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            count = 0
-            for chunk in chunks:
-                cur.execute(
-                    f"INSERT INTO kb_{safe}.chunks (title, content, source, tags) VALUES (%s, %s, %s, %s)",
-                    (chunk.get("title", ""), chunk["content"], chunk.get("source"), chunk.get("tags", [])),
-                )
-                count += 1
-        conn.commit()
-    return count
+    result = add_chunks(kb_name, chunks)
+    return result["inserted"]
 
 
 async def main():

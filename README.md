@@ -3,12 +3,16 @@
 > MCP (Model Context Protocol) server for managing and searching multi-tenant knowledge bases.
 >
 > Part of the [Astra AI Agent Infrastructure](https://github.com/alrcatraz/astra-aiagent-infra) ecosystem.
+>
+> [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+> [![GitHub stars](https://badgen.net/github/stars/alrcatraz/astra-knowledge-base-mcp)](https://github.com/alrcatraz/astra-knowledge-base-mcp)
+> [![GitHub last commit](https://badgen.net/github/last-commit/alrcatraz/astra-knowledge-base-mcp)](https://github.com/alrcatraz/astra-knowledge-base-mcp/commits)
 
 ## Overview
 
-Astra Knowledge Base MCP provides AI agents (via [Hermes Agent](https://hermes-agent.nousresearch.com) or any MCP-compatible host) with persistent, searchable knowledge bases backed by PostgreSQL.
+Astra Knowledge Base MCP provides AI agents with persistent, searchable knowledge bases backed by **SQLite + FTS5** — zero external dependencies, one file per deployment.
 
-Each knowledge base is an isolated schema with full-text search (PostgreSQL `tsvector`). Content is auto-chunked on ingestion.
+Each knowledge base is an isolated namespace with full-text search. Content is auto-chunked on ingestion using recursive text splitting.
 
 ## Tools
 
@@ -20,45 +24,34 @@ Each knowledge base is an isolated schema with full-text search (PostgreSQL `tsv
 | `kb_enable` | Enable a knowledge base (include in search results) |
 | `kb_disable` | Disable a knowledge base (exclude from search) |
 | `kb_add` | Add text content to a knowledge base (auto-chunked) |
-| `kb_search` | Search across enabled knowledge bases |
+| `kb_search` | Search across enabled (or specified) knowledge bases |
 
 ## Prerequisites
 
-- **PostgreSQL 16+** — with full-text search support (built-in, no extensions required)
 - **Python 3.11+**
 - **uv** — Python package manager (`pip install uv`)
 
 ## Setup
 
-### 1. Database
-
-Create the database:
+### 1. Install dependencies
 
 ```bash
-createdb astra_kb
+uv sync
 ```
 
-The server creates required tables automatically on first run.
-
-### 2. Configuration
-
-Configure via environment variables (defaults for local dev):
-
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `ASTRA_DB_HOST` | `127.0.0.1` | PostgreSQL host |
-| `ASTRA_DB_PORT` | `5432` | PostgreSQL port |
-| `ASTRA_DB_NAME` | `astra_kb` | Database name |
-| `ASTRA_DB_USER` | `astramcp` | Database user |
-| `ASTRA_DB_PASSWORD` | `astra_kb_2026` | Database password |
-
-### 3. Start
+### 2. Start
 
 ```bash
 uv run server.py
 ```
 
-The server starts in MCP stdio mode, ready to connect to any MCP-compatible host.
+The database file is created at `~/.astra/knowledge-base.db` by default. Override with the `ASTRA_KB_PATH` environment variable.
+
+## Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `ASTRA_KB_PATH` | `~/.astra/knowledge-base.db` | Path to the SQLite database file |
 
 ## Registering in Hermes Agent
 
@@ -67,12 +60,8 @@ Add to your Hermes `config.yaml`:
 ```yaml
 mcp_servers:
   astra-knowledge-base:
-    command: uv
-    args:
-      - run
-      - --directory
-      - /path/to/astra-knowledge-base-mcp
-      - server.py
+    command: /path/to/astra-knowledge-base-mcp/run.sh
+    enabled: true
 ```
 
 Then restart Hermes Agent. The tools (`kb_list`, `kb_search`, etc.) become available automatically.
@@ -84,18 +73,17 @@ AI Agent (Hermes)
     │  MCP stdio protocol
     ▼
 astra-knowledge-base-mcp (Python, uv run)
-    │  psycopg2
+    │  sqlite3 (stdlib)
     ▼
-PostgreSQL 16 (astra_kb)
-    ├── public.kb_registry       ← KB metadata & status
-    └── kb_<name>.chunks         ← Per-KB content with FTS index
+SQLite (.db file — ~/.astra/knowledge-base.db)
+    ├── kb_registry          ← KB metadata & status
+    ├── chunks               ← Content storage
+    └── chunks_fts           ← FTS5 virtual table (auto-synced)
 ```
-
-Content is chunked automatically on ingestion using recursive text splitting with configurable chunk size and overlap.
 
 ## Related
 
-- [astra-aiagent-infra](https://github.com/alcatraz/astra-aiagent-infra) — ecosystem portal
+- [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) — ecosystem portal
 - [Hermes Agent](https://hermes-agent.nousresearch.com) — AI agent framework
 - [MCP](https://modelcontextprotocol.io) — Model Context Protocol
 

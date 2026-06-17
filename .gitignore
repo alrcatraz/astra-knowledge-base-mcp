@@ -8,4 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+
+# Internal design docs
 plan.md

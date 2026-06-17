@@ -1,10 +1,9 @@
 [project]
 name = "astra-knowledge-base-mcp"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "SQLite-backed knowledge base MCP server for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.27.2",
-    "psycopg2-binary>=2.9.12",
 ]
