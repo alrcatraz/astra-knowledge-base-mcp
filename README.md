@@ -2,9 +2,9 @@
 
 > MCP (Model Context Protocol) server for managing and searching multi-tenant knowledge bases.
 >
-> Part of the [Astra AI Agent Infrastructure](https://github.com/alrcatraz/astra-aiagent-infra) ecosystem.
+> Part of [Astra AI Agent Infrastructure](https://github.com/alrcatraz/astra-aiagent-infra)
 >
-> [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+> [![License: MIT](https://badgen.net/github/license/alrcatraz/astra-knowledge-base-mcp)](LICENSE)
 > [![GitHub stars](https://badgen.net/github/stars/alrcatraz/astra-knowledge-base-mcp)](https://github.com/alrcatraz/astra-knowledge-base-mcp)
 > [![GitHub last commit](https://badgen.net/github/last-commit/alrcatraz/astra-knowledge-base-mcp)](https://github.com/alrcatraz/astra-knowledge-base-mcp/commits)
 
@@ -13,18 +13,6 @@
 Astra Knowledge Base MCP provides AI agents with persistent, searchable knowledge bases backed by **SQLite + FTS5** — zero external dependencies, one file per deployment.
 
 Each knowledge base is an isolated namespace with full-text search. Content is auto-chunked on ingestion using recursive text splitting.
-
-## Tools
-
-| Tool | Description |
-|:-----|:------------|
-| `kb_list` | List all knowledge bases with enable/disable status |
-| `kb_create` | Create a new empty knowledge base |
-| `kb_delete` | Permanently delete a knowledge base and all its content |
-| `kb_enable` | Enable a knowledge base (include in search results) |
-| `kb_disable` | Disable a knowledge base (exclude from search) |
-| `kb_add` | Add text content to a knowledge base (auto-chunked) |
-| `kb_search` | Search across enabled (or specified) knowledge bases |
 
 ## Prerequisites
 
@@ -53,7 +41,21 @@ The database file is created at `~/.astra/knowledge-base.db` by default. Overrid
 |:---------|:--------|:------------|
 | `ASTRA_KB_PATH` | `~/.astra/knowledge-base.db` | Path to the SQLite database file |
 
-## Registering in Hermes Agent
+## Usage
+
+### MCP Tools
+
+| Tool | Description |
+|:-----|:------------|
+| `kb_list` | List all knowledge bases with enable/disable status |
+| `kb_create` | Create a new empty knowledge base |
+| `kb_delete` | Permanently delete a knowledge base and all its content |
+| `kb_enable` | Enable a knowledge base (include in search results) |
+| `kb_disable` | Disable a knowledge base (exclude from search) |
+| `kb_add` | Add text content to a knowledge base (auto-chunked) |
+| `kb_search` | Search across enabled (or specified) knowledge bases |
+
+### Registering in Hermes Agent
 
 Add to your Hermes `config.yaml`:
 
@@ -81,6 +83,10 @@ SQLite (.db file — ~/.astra/knowledge-base.db)
     └── chunks_fts           ← FTS5 virtual table (auto-synced)
 ```
 
+### Agent Guide
+
+See [AGENTS.md](AGENTS.md) for AI-agent-oriented documentation (entry points, workflows, Hermes integration).
+
 ## Related
 
 - [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) — ecosystem portal
@@ -90,6 +96,8 @@ SQLite (.db file — ~/.astra/knowledge-base.db)
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+> CI/CD: coming soon — see [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) for ecosystem-wide pipeline plans.
 
 ---
 
