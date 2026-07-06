@@ -16,3 +16,5 @@ wheels/
 
 # Internal design docs
 plan.md
+
+.codegraph/
