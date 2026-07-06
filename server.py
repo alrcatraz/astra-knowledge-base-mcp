@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Astra Knowledge Base MCP Server.
+"""Astra Knowledge Base MCP Server (PostgreSQL).
 
-Provides tools for AI agents to manage and search multi-tenant knowledge bases
-backed by SQLite + FTS5 full-text search.
+Provides MCP tools for AI agents to manage and search multi-tenant
+knowledge bases backed by PostgreSQL + tsvector full-text search.
 
 Tools:
-  kb_list       — List all knowledge bases
-  kb_create     — Create a new knowledge base
-  kb_delete     — Delete a knowledge base
-  kb_enable     — Enable a KB (include in search)
-  kb_disable    — Disable a KB (exclude from search)
-  kb_add        — Add content to a knowledge base
-  kb_search     — Search across enabled KBs
+  Tools               — KB lifecycle (list/create/delete/enable/disable)
+  kb_add              — Add text content (auto-chunked)
+  kb_search           — Full-text search across KBs
+  kb_list_chunks      — Paginated chunk listing
+  kb_update           — Edit a chunk (replace or append)
+  kb_delete_chunk     — Delete a single chunk
+  mgmt_list_tables    — List operational mgmt tables
+  mgmt_query          — Query operational data (services/health_log/api_keys)
 """
 
 import sys
@@ -22,14 +23,22 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 
-from db import get_connection, init_db
-from kb_manager import create_kb, delete_kb, enable_kb, disable_kb, list_kbs, add_chunks
-from search.fts import FTSEngine
-from ingestion.text import TextIngestor
+from pg_backend import (
+    list_kbs, create_kb, delete_kb, enable_kb, disable_kb,
+    add_chunks, search_kbs as pg_search,
+    search_kbs_vector, search_kbs_hybrid,
+    list_chunks, update_chunk, delete_chunk,
+    mgmt_list_tables, mgmt_query,
+)
+
+def _search(query, kb_names=None, limit=10, search_mode="hybrid"):
+    if search_mode == "vector":
+        return search_kbs_vector(query, kb_names, limit)
+    elif search_mode == "fts":
+        return pg_search(query, kb_names, limit)
+    return search_kbs_hybrid(query, kb_names, limit)
 
 server = Server("astra-knowledge-base")
-fts_engine = FTSEngine()
-text_ingestor = TextIngestor()
 
 
 @server.list_tools()
@@ -102,7 +111,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="kb_search",
-            description="Search across enabled (or specified) knowledge bases",
+            description="Search across enabled (or specified) knowledge bases. Default: hybrid (FTS + vector)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -113,8 +122,96 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Optional: restrict search to specific KBs",
                     },
                     "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
+                    "search_mode": {
+                        "type": "string",
+                        "enum": ["hybrid", "fts", "vector"],
+                        "description": "Search mode: hybrid (default), fts, or vector",
+                        "default": "hybrid",
+                    },
                 },
                 "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="kb_list_chunks",
+            description="List chunks in a knowledge base (paginated)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb": {"type": "string", "description": "Knowledge base name"},
+                    "limit": {"type": "integer", "description": "Max results (default 50)", "default": 50},
+                    "offset": {"type": "integer", "description": "Offset for pagination (default 0)", "default": 0},
+                },
+                "required": ["kb"],
+            },
+        ),
+        types.Tool(
+            name="kb_update",
+            description="Update a chunk. Unset fields keep current value. mode='append' appends to content.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb": {"type": "string", "description": "Knowledge base name"},
+                    "chunk_id": {"type": "integer", "description": "Chunk ID to update"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append"],
+                        "description": "'replace' (default) or 'append'",
+                        "default": "replace",
+                    },
+                    "title": {"type": "string", "description": "Optional new title"},
+                    "content": {"type": "string", "description": "Optional new content"},
+                    "source": {"type": "string", "description": "Optional new source"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional new tags"},
+                    "media_url": {"type": "string", "description": "Optional media URL"},
+                    "media_type": {"type": "string", "description": "Optional media MIME type"},
+                },
+                "required": ["kb", "chunk_id"],
+            },
+        ),
+        types.Tool(
+            name="kb_delete_chunk",
+            description="Delete a single chunk by ID",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb": {"type": "string", "description": "Knowledge base name"},
+                    "chunk_id": {"type": "integer", "description": "Chunk ID to delete"},
+                },
+                "required": ["kb", "chunk_id"],
+            },
+        ),
+        types.Tool(
+            name="mgmt_list_tables",
+            description="List available operational tables (services, health_log, api_keys, ...)",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
+            name="mgmt_query",
+            description="Query operational data from mgmt schema tables",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "table": {
+                        "type": "string",
+                        "enum": ["services", "health_log", "api_keys"],
+                        "description": "Table to query",
+                    },
+                    "filter_col": {
+                        "type": "string",
+                        "description": "Optional column to filter by (e.g. 'name', 'type', 'provider')",
+                    },
+                    "filter_val": {
+                        "type": "string",
+                        "description": "Optional value to filter on",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 20)",
+                        "default": 20,
+                    },
+                },
+                "required": ["table"],
             },
         ),
     ]
@@ -149,34 +246,69 @@ async def handle_call_tool(
             return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         case "kb_add":
-            chunks = text_ingestor.ingest(
+            from ingestion.text import TextIngestor
+            chunks = TextIngestor().ingest(
                 arguments["content"],
                 title=arguments.get("title", ""),
                 source=arguments.get("source"),
                 tags=arguments.get("tags", []),
             )
-            added = _store_chunks(arguments["kb"], chunks)
+            added = add_chunks(arguments["kb"], chunks)["inserted"]
             return [types.TextContent(
                 type="text",
                 text=json.dumps({"success": True, "kb": arguments["kb"], "chunks_added": added}, indent=2, ensure_ascii=False),
             )]
 
         case "kb_search":
-            results = fts_engine.search(
+            results = _search(
                 arguments["query"],
                 kb_names=arguments.get("kb_names"),
                 limit=arguments.get("limit", 10),
+                search_mode=arguments.get("search_mode", "hybrid"),
             )
             return [types.TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))]
 
+        case "kb_list_chunks":
+            result = list_chunks(
+                arguments["kb"],
+                limit=arguments.get("limit", 50),
+                offset=arguments.get("offset", 0),
+            )
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        case "kb_update":
+            result = update_chunk(
+                arguments["kb"],
+                arguments["chunk_id"],
+                mode=arguments.get("mode", "replace"),
+                title=arguments.get("title"),
+                content=arguments.get("content"),
+                source=arguments.get("source"),
+                tags=arguments.get("tags"),
+                media_url=arguments.get("media_url"),
+                media_type=arguments.get("media_type"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        case "kb_delete_chunk":
+            result = delete_chunk(arguments["kb"], arguments["chunk_id"])
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        case "mgmt_list_tables":
+            result = mgmt_list_tables()
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        case "mgmt_query":
+            result = mgmt_query(
+                arguments["table"],
+                filter_col=arguments.get("filter_col"),
+                filter_val=arguments.get("filter_val"),
+                limit=arguments.get("limit", 20),
+            )
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
         case _:
             raise ValueError(f"Unknown tool: {name}")
-
-
-def _store_chunks(kb_name: str, chunks: list[dict]) -> int:
-    """Insert chunks into a knowledge base. Returns count."""
-    result = add_chunks(kb_name, chunks)
-    return result["inserted"]
 
 
 async def main():
