@@ -42,17 +42,14 @@ The database file is created at `~/.astra/knowledge-base.db` by default. Overrid
 
 ## Configuration
 
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `ASTRA_KB_BACKEND` | `sqlite` | Backend: `sqlite` (stdlib) or `postgres` (psycopg2 + pgvector) |
-| `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL DSN (only used with `postgres` backend) |
-| `ASTRA_KB_PATH` | `~/.astra/knowledge-base.db` | Path to the SQLite database file |
-| `ASTRA_EMBED_BACKEND` | `local` | Embedding backend: `local` (llama.cpp) or `siliconflow` (API) |
-| `ASTRA_EMBED_URL` | `http://127.0.0.3:8081` | URL for local llama.cpp embedding server |
-| `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
-| `ASTRA_EMBED_API_KEY` | `SILICONFLOW_API_KEY` fallback | API key for siliconflow/API embedding backend |
-| `ASTRA_EMBED_API_URL` | `https://api.siliconflow.cn/v1/embeddings` | API endpoint URL (OpenAI-compatible `/v1/embeddings`) |
-| `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-Embedding-8B` | Model name for the API embedding backend |
+|| Variable | Default | Description |
+||:---------|:--------|:------------|
+|| `ASTRA_KB_BACKEND` | `postgres` | Backend: `postgres` (psycopg2 + pgvector). SQLite has been removed. |
+|| `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL DSN |
+|| `ASTRA_EMBED_BASE_URL` | `https://api.siliconflow.cn/v1` | OpenAI-compatible embedding endpoint base URL |
+|| `ASTRA_EMBED_API_KEY` | - | API key for the embedding endpoint |
+|| `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-Embedding-8B` | Embedding model name |
+|| `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
 
 ## Usage
 
@@ -94,14 +91,9 @@ AI Agent (Hermes)
     ▼
 astra-knowledge-base-mcp (Python, uv run)
     │
-    ├── SQLite (stdlib) → ~/.astra/knowledge-base.db
-    │   ├── kb_registry    ← KB metadata & status
-    │   ├── chunks         ← Content storage
-    │   └── chunks_fts     ← FTS5 virtual table
-    │
-    └── PostgreSQL (psycopg2) → astra_kb
+    └── PostgreSQL (psycopg2 + pgvector) → astra_kb
         ├── kb_registry       ← KB metadata & status
-        ├── kb_*.chunks       ← Per-KB schema (tsvector FTS)
+        ├── kb_*.chunks       ← Per-KB schema (tsvector FTS + vector(1024))
         └── mgmt              ← Operational data (services, health_log, api_keys)
 ```
 
@@ -120,6 +112,18 @@ See [AGENTS.md](AGENTS.md) for AI-agent-oriented documentation (entry points, wo
 ## Dependencies
 
 This service has no external dependencies. The SQLite database is managed entirely via Python stdlib (`sqlite3`).
+
+## Architecture
+
+### Retrieval Strategy
+
+We are adopting **SAG (SQL-Retrieval Augmented Generation)** — an original retrieval architecture that replaces both traditional RAG and GraphRAG. SAG uses event-entity indexing and query-time dynamic hyperedges to deliver both semantic retrieval and relational reasoning in a single pipeline.
+
+**Reference:**
+- SAG paper: [arxiv 2606.15971](https://arxiv.org/abs/2606.15971) — Yuchao Wu et al., Zleap AI
+- Reference implementation: [github.com/Zleap-AI/SAG](https://github.com/Zleap-AI/SAG) — MIT License
+
+Our implementation follows the SAG algorithm as described in the paper, implemented directly on our PostgreSQL/pgvector infrastructure.
 
 ## License
 

@@ -184,20 +184,18 @@ def add_chunks(kb_name: str, chunks: list[dict]) -> dict:
     """Add chunks with optional auto-embedding."""
     schema = f"{SCHEMA_PREFIX}{kb_name}"
 
-    for c in chunks:
+    # Batch embed all chunk contents first
+    try:
+        from embed_client import embed_batch
+        texts = [c.get("content", "")[:2048] for c in chunks]
+        vectors = embed_batch(texts)
+    except Exception:
+        vectors = [None] * len(chunks)
+
+    for c, vector in zip(chunks, vectors):
         content = c.get("content", "")
         title = c.get("title", "")
 
-        # Embed the chunk content
-        vector = None
-        embed_text_for_store = content[:2048]  # clip to avoid over-long input
-        try:
-            from embed_client import embed_text
-            vector = embed_text(embed_text_for_store)
-        except Exception:
-            vector = None
-
-        # Insert with embed_vec if available
         if vector is not None:
             _execute(
                 f"""INSERT INTO {schema}.chunks (title, content, source, tags, media_url, media_type, embed_vec)
