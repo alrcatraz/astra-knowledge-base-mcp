@@ -8,13 +8,28 @@ wheels/
 
 # Virtual environments
 .venv
+.venv/
 
-# SQLite database files
+# SQLite database files (embed cache, local Kb)
 *.db
 *.db-wal
 *.db-shm
 
-# Internal design docs
+# Internal planning and agent docs (generated, not shipped)
+AGENTS.md
+PLAN.md
 plan.md
+planning/
+design/
+notes/
 
+# One-time migration scripts
+scripts/migrate_*.py
+
+# Code indexing cache
 .codegraph/
+
+# Environment config (contains API keys)
+.env
+.env.*
+*.env

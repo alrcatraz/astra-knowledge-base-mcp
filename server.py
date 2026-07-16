@@ -29,6 +29,7 @@ from pg_backend import (
     search_kbs_vector, search_kbs_hybrid,
     list_chunks, update_chunk, delete_chunk,
     mgmt_list_tables, mgmt_query,
+    search_sag_fast, search_sag_precise, extract_chunks,
 )
 
 def _search(query, kb_names=None, limit=10, search_mode="hybrid"):
@@ -36,6 +37,10 @@ def _search(query, kb_names=None, limit=10, search_mode="hybrid"):
         return search_kbs_vector(query, kb_names, limit)
     elif search_mode == "fts":
         return pg_search(query, kb_names, limit)
+    elif search_mode == "sag_fast":
+        return search_sag_fast(query, kb_names, limit)
+    elif search_mode == "sag_precise":
+        return search_sag_precise(query, kb_names, limit)
     return search_kbs_hybrid(query, kb_names, limit)
 
 server = Server("astra-knowledge-base")
@@ -124,8 +129,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
                     "search_mode": {
                         "type": "string",
-                        "enum": ["hybrid", "fts", "vector"],
-                        "description": "Search mode: hybrid (default), fts, or vector",
+                        "enum": ["hybrid", "fts", "vector", "sag_fast", "sag_precise"],
+                        "description": "Search mode: hybrid (default), fts, vector, sag_fast (event vectors), sag_precise (entity-guided)",
                         "default": "hybrid",
                     },
                 },
@@ -179,6 +184,17 @@ async def handle_list_tools() -> list[types.Tool]:
                     "chunk_id": {"type": "integer", "description": "Chunk ID to delete"},
                 },
                 "required": ["kb", "chunk_id"],
+            },
+        ),
+        types.Tool(
+            name="kb_extract",
+            description="Extract events and entities from unprocessed chunks (SAG indexing). Reference: arXiv 2606.15971",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kb": {"type": "string", "description": "Knowledge base name"},
+                },
+                "required": ["kb"],
             },
         ),
         types.Tool(
@@ -292,6 +308,10 @@ async def handle_call_tool(
 
         case "kb_delete_chunk":
             result = delete_chunk(arguments["kb"], arguments["chunk_id"])
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+        case "kb_extract":
+            result = extract_chunks(arguments["kb"])
             return [types.TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
         case "mgmt_list_tables":
