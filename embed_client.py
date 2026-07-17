@@ -8,6 +8,8 @@ Config via environment variables — no hardcoded provider names.
   ASTRA_EMBED_MODEL      — Model name (default: Qwen/Qwen3-VL-Embedding-8B)
   ASTRA_EMBED_DIM        — Embedding dimension (default: 1024)
 
+Cache is stored in PostgreSQL (embed_cache table) — no SQLite dependency.
+
 Supports VL (vision-language) embedding for text + image mixed input.
 
 Examples:
@@ -30,12 +32,10 @@ Examples:
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 # ── Configuration (all from env, no hardcoded provider names) ─────
 
@@ -48,25 +48,29 @@ API_KEY = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_A
 MODEL = os.environ.get("ASTRA_EMBED_MODEL", "Qwen/Qwen3-VL-Embedding-8B")
 DIM = int(os.environ.get("ASTRA_EMBED_DIM", "1024"))
 
-# ── Embedding cache (SQLite-backed, survives restarts) ────────────
+# ── Embedding cache (PostgreSQL-backed, survives restarts) ────────
 
-_CACHE_DIR = Path(os.environ.get("ASTRA_KB_PATH", str(Path.home() / ".astra"))).parent
-_CACHE_DB = _CACHE_DIR / "embed_cache.db"
+_PG_DSN = os.environ.get(
+    "ASTRA_KB_PG_DSN",
+    "dbname=astra_kb user=postgres host=/run/postgresql",
+)
 
 
-def _get_cache_db() -> sqlite3.Connection:
-    """Get a connection to the embedding cache database."""
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_CACHE_DB))
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS embed_cache (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            model TEXT NOT NULL,
-            dim   INTEGER NOT NULL,
-            ts    REAL NOT NULL
-        )"""
-    )
+def _get_pg_conn():
+    """Get a PostgreSQL connection for the embedding cache."""
+    import psycopg2
+
+    conn = psycopg2.connect(_PG_DSN)
+    with conn.cursor() as cur:
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS embed_cache (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                model TEXT NOT NULL,
+                dim   INTEGER NOT NULL,
+                ts    DOUBLE PRECISION NOT NULL
+            )"""
+        )
     conn.commit()
     return conn
 
@@ -78,11 +82,13 @@ def _cache_key(text: str) -> str:
 def _cache_get(key: str) -> list[float] | None:
     """Retrieve cached embedding. Returns None on miss."""
     try:
-        conn = _get_cache_db()
-        row = conn.execute(
-            "SELECT value, model, dim FROM embed_cache WHERE key = ?",
-            (key,),
-        ).fetchone()
+        conn = _get_pg_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value, model, dim FROM embed_cache WHERE key = %s",
+                (key,),
+            )
+            row = cur.fetchone()
         conn.close()
         if row and row[1] == MODEL and row[2] == DIM:
             return json.loads(row[0])
@@ -94,11 +100,16 @@ def _cache_get(key: str) -> list[float] | None:
 def _cache_set(key: str, vector: list[float]):
     """Store embedding in cache."""
     try:
-        conn = _get_cache_db()
-        conn.execute(
-            "INSERT OR REPLACE INTO embed_cache (key, value, model, dim, ts) VALUES (?, ?, ?, ?, ?)",
-            (key, json.dumps(vector), MODEL, DIM, time.time()),
-        )
+        conn = _get_pg_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO embed_cache (key, value, model, dim, ts) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value = EXCLUDED.value, model = EXCLUDED.model, "
+                "  dim = EXCLUDED.dim, ts = EXCLUDED.ts",
+                (key, json.dumps(vector), MODEL, DIM, time.time()),
+            )
         conn.commit()
         conn.close()
     except Exception:
@@ -170,11 +181,6 @@ def embed_batch(texts: list[str]) -> list[list[float] | None]:
 
     if uncached_texts:
         api_results = _call_api_batch(uncached_texts)
-        for i, vector in enumerate(api_results):
-            if vector is not None:
-                # Find the right result slot
-                # (uncached_keys indexes into results via sequential scan)
-                pass
 
         # Map API results back to result slots
         uncached_idx = 0
