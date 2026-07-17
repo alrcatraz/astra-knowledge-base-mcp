@@ -15,44 +15,71 @@
 
 ## Overview
 
-Astra Knowledge Base MCP provides AI agents with persistent, searchable knowledge bases backed by **SQLite + FTS5** — zero external dependencies, one file per deployment.
+Astra Knowledge Base MCP provides AI agents with persistent, searchable knowledge bases backed by **PostgreSQL 16+ with pgvector** — hybrid full-text and vector search, plus SAG (SQL-Retrieval Augmented Generation) for relational reasoning across chunks.
 
-Each knowledge base is an isolated namespace with full-text search. Content is auto-chunked on ingestion using recursive text splitting.
+Each knowledge base is an isolated namespace. Content is auto-chunked on ingestion (recursive, heading-anchor, or semantic splitting), embedded via any OpenAI-compatible endpoint, and indexed for three complimentary retrieval paths.
 
 ## Prerequisites
 
 - **Python 3.11+**
 - **uv** — Python package manager (`pip install uv`)
+- **PostgreSQL 16+ with pgvector** — installation guide: [pgvector.org](https://github.com/pgvector/pgvector)
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Configure PostgreSQL
+
+Create the database and enable pgvector:
+
+```sql
+CREATE DATABASE astra_kb;
+\c astra_kb
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+### 2. Install dependencies
 
 ```bash
 uv sync
 ```
 
-### 2. Start
+### 3. Configure environment
+
+```bash
+# Embedding endpoint (any OpenAI-compatible API)
+export ASTRA_EMBED_BASE_URL=https://api.siliconflow.cn/v1
+export ASTRA_EMBED_API_KEY=sk-...
+export ASTRA_EMBED_MODEL=Qwen/Qwen3-VL-Embedding-8B
+export ASTRA_EMBED_DIM=1024
+
+# Optional: LLM endpoint for SAG extraction
+export ASTRA_LLM_BASE_URL=https://api.siliconflow.cn/v1
+export ASTRA_LLM_API_KEY=sk-...
+export ASTRA_LLM_MODEL=THUDM/GLM-Z1-9B-0414
+
+# PostgreSQL connection
+export ASTRA_KB_PG_DSN=dbname=astra_kb user=postgres host=/run/postgresql
+```
+
+### 4. Start
 
 ```bash
 uv run server.py
 ```
 
-The database file is created at `~/.astra/knowledge-base.db` by default. Override with the `ASTRA_KB_PATH` environment variable.
-
 ## Configuration
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `ASTRA_KB_BACKEND` | `sqlite` | Backend: `sqlite` (stdlib) or `postgres` (psycopg2 + pgvector) |
-| `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL DSN (only used with `postgres` backend) |
-| `ASTRA_KB_PATH` | `~/.astra/knowledge-base.db` | Path to the SQLite database file |
-| `ASTRA_EMBED_BACKEND` | `local` | Embedding backend: `local` (llama.cpp) or `siliconflow` (API) |
-| `ASTRA_EMBED_URL` | `http://127.0.0.3:8081` | URL for local llama.cpp embedding server |
+| `ASTRA_KB_BACKEND` | `postgres` | Backend — PostgreSQL only (SQLite removed) |
+| `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL connection string |
+| `ASTRA_EMBED_BASE_URL` | `https://api.siliconflow.cn/v1` | OpenAI-compatible embedding endpoint |
+| `ASTRA_EMBED_API_KEY` | — | Embedding API key |
+| `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-VL-Embedding-8B` | Embedding model (supports VL for text+image) |
 | `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
-| `ASTRA_EMBED_API_KEY` | `SILICONFLOW_API_KEY` fallback | API key for siliconflow/API embedding backend |
-| `ASTRA_EMBED_API_URL` | `https://api.siliconflow.cn/v1/embeddings` | API endpoint URL (OpenAI-compatible `/v1/embeddings`) |
-| `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-Embedding-8B` | Model name for the API embedding backend |
+| `ASTRA_LLM_BASE_URL` | `https://api.siliconflow.cn/v1` | LLM endpoint for SAG extraction |
+| `ASTRA_LLM_API_KEY` | — | LLM API key |
+| `ASTRA_LLM_MODEL` | `THUDM/GLM-Z1-9B-0414` | LLM model for extraction |
 
 ## Usage
 
@@ -63,13 +90,18 @@ The database file is created at `~/.astra/knowledge-base.db` by default. Overrid
 | `kb_list` | List all knowledge bases with enable/disable status |
 | `kb_create` | Create a new empty knowledge base |
 | `kb_delete` | Permanently delete a knowledge base and all its content |
-| `kb_enable` | Enable a knowledge base (include in search results) |
-| `kb_disable` | Disable a knowledge base (exclude from search) |
-| `kb_add` | Add text content to a knowledge base (auto-chunked) |
-| `kb_search` | Search across enabled (or specified) knowledge bases |
-| `kb_list_chunks` | List chunks in a knowledge base (paginated) |
+| `kb_enable` / `kb_disable` | Toggle KB visibility in search |
+| `kb_add` | Add text content (auto-chunked + embedded) |
 | `kb_update` | Update a chunk (replace or append mode) |
 | `kb_delete_chunk` | Delete a single chunk by ID |
+| `kb_list_chunks` | List chunks in a knowledge base (paginated) |
+| `kb_search` | Search across KBs — modes: `hybrid` (default), `fts`, `vector`, `sag_fast`, `sag_precise` |
+| `kb_extract` | Extract events and entities from unprocessed chunks (SAG indexing) |
+| `kb_import_file` | Import a file (PDF, DOCX, PPTX, TXT, MD) via MarkItDown |
+| `kb_import_jsonl` | Import chunks from a JSONL file |
+| `kb_export_jsonl` | Export all chunks to JSONL |
+| `kb_stats` | Knowledge base statistics and overview |
+| `kb_diff` | Track chunk changes over time |
 | `mgmt_list_tables` | List mgmt schema tables (services, health_log, api_keys) |
 | `mgmt_query` | Query operational data from mgmt tables |
 
@@ -84,7 +116,7 @@ mcp_servers:
     enabled: true
 ```
 
-Then restart Hermes Agent. The tools (`kb_list`, `kb_search`, etc.) become available automatically.
+Then restart Hermes Agent. The tools become available automatically.
 
 ## Architecture
 
@@ -94,18 +126,21 @@ AI Agent (Hermes)
     ▼
 astra-knowledge-base-mcp (Python, uv run)
     │
-    ├── SQLite (stdlib) → ~/.astra/knowledge-base.db
-    │   ├── kb_registry    ← KB metadata & status
-    │   ├── chunks         ← Content storage
-    │   └── chunks_fts     ← FTS5 virtual table
+    ├── PostgreSQL (psycopg2 + pgvector) → astra_kb
+    │   ├── kb_registry         ← KB metadata & status
+    │   ├── kb_*.chunks         ← Per-KB schema (tsvector FTS + vector(1024))
+    │   ├── kb_*.events         ← SAG event index (vector(1024))
+    │   ├── kb_*.entities       ← SAG entity index (vector(1024))
+    │   └── mgmt                ← Operational data (services, health_log, api_keys)
     │
-    └── PostgreSQL (psycopg2) → astra_kb
-        ├── kb_registry       ← KB metadata & status
-        ├── kb_*.chunks       ← Per-KB schema (tsvector FTS)
-        └── mgmt              ← Operational data (services, health_log, api_keys)
+    └── Embedding cache (SQLite) → embed_cache.db
 ```
 
-Switch backends via `ASTRA_KB_BACKEND=postgres` or `ASTRA_KB_BACKEND=sqlite` (default).
+Three complimentary retrieval paths:
+
+- **FTS** — keyword search via PostgreSQL `tsvector` / `ts_rank`
+- **Vector** — semantic search via cosine similarity on `pgvector` indexes
+- **SAG** — SQL-Retrieval Augmented Generation: event-entity extraction + query-time hyperedge expansion for multi-hop reasoning across chunks
 
 ### Agent Guide
 
@@ -119,13 +154,24 @@ See [AGENTS.md](AGENTS.md) for AI-agent-oriented documentation (entry points, wo
 
 ## Dependencies
 
-This service has no external dependencies. The SQLite database is managed entirely via Python stdlib (`sqlite3`).
+- **PostgreSQL 16+** with **pgvector** — primary data store
+- **psycopg2-binary** — PostgreSQL driver
+- **MarkItDown** — file import (PDF, DOCX, PPTX)
+- **SQLite** (stdlib) — local embedding cache only
+
+## Retrieval Strategy
+
+We implement **SAG (SQL-Retrieval Augmented Generation)** — an original retrieval architecture that replaces both traditional RAG and GraphRAG. SAG uses event-entity indexing and query-time dynamic hyperedges to deliver both semantic retrieval and relational reasoning in a single pipeline.
+
+**Reference:**
+- SAG paper: [arxiv 2606.15971](https://arxiv.org/abs/2606.15971) — Yuchao Wu et al., Zleap AI (MIT)
+- Reference implementation: [github.com/Zleap-AI/SAG](https://github.com/Zleap-AI/SAG) — MIT License
+
+Our implementation follows the SAG algorithm directly on our PostgreSQL/pgvector infrastructure, without wrapping the reference package.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-> CI/CD: coming soon — see [astra-aiagent-infra](https://github.com/alrcatraz/astra-aiagent-infra) for ecosystem-wide pipeline plans.
 
 ---
 
@@ -133,17 +179,21 @@ MIT — see [LICENSE](LICENSE).
 
 ### 概述
 
-Astra Knowledge Base MCP 为 AI Agent 提供基于 **SQLite + FTS5** 的持久化、可搜索知识库——零外部依赖，每个部署一个文件。
+Astra Knowledge Base MCP 为 AI Agent 提供基于 **PostgreSQL 16+ + pgvector** 的持久化、可搜索知识库——支持混合全文/向量检索和 SAG（SQL 检索增强生成）关联推理。
 
-每个知识库是一个隔离的命名空间，支持全文搜索。内容引入时自动进行递归文本分块。
+每个知识库是隔离的命名空间，内容引入时自动分块（递归、heading-anchor 或语义切分），通过任意 OpenAI 兼容的端点进行向量化，并建立三种互补的检索路径。
 
-### 依赖关系
+### 配置
 
-此服务无外部 astra 生态依赖。SQLite 数据库完全通过 Python 标准库 `sqlite3` 管理。
+```bash
+export ASTRA_EMBED_API_KEY=sk-...
+export ASTRA_KB_PG_DSN=dbname=astra_kb user=postgres host=/run/postgresql
+uv run server.py
+```
 
 ---
 
-&lt;p align=&quot;center&quot;&gt;
+<p align="center">
   <a href="https://star-history.com/#alrcatraz/astra-knowledge-base-mcp&Date">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=alrcatraz/astra-knowledge-base-mcp&type=Date&theme=dark" />

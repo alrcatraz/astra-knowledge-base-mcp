@@ -106,6 +106,7 @@ def create_kb(name: str, description: str = ""):
     try:
         with conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            # ── Chunks table (existing) ──
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {schema}.chunks (
                     id         SERIAL PRIMARY KEY,
@@ -129,6 +130,57 @@ def create_kb(name: str, description: str = ""):
                 f"CREATE INDEX IF NOT EXISTS idx_{schema}_embed ON {schema}.chunks "
                 f"USING hnsw (embed_vec vector_cosine_ops)"
             )
+
+            # ── SAG: events table (Phase 1) ──
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.events (
+                    id         SERIAL PRIMARY KEY,
+                    chunk_id   INTEGER NOT NULL REFERENCES {schema}.chunks(id) ON DELETE CASCADE,
+                    event_text TEXT NOT NULL,
+                    embed_vec  vector(1024)
+                )
+            """)
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{schema}_event_embed ON {schema}.events "
+                f"USING hnsw (embed_vec vector_cosine_ops)"
+            )
+
+            # ── SAG: entities table (Phase 1) ──
+            # 11 types per SAG paper: time, location, person, organization,
+            # group, topic, work, product, action, metric, label
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.entities (
+                    id          SERIAL PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    entity_type TEXT NOT NULL DEFAULT 'label',
+                    embed_vec   vector(1024),
+                    UNIQUE(name)
+                )
+            """)
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{schema}_entity_embed ON {schema}.entities "
+                f"USING hnsw (embed_vec vector_cosine_ops)"
+            )
+
+            # ── SAG: event-entity association (hyperedge) ──
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.event_entities (
+                    event_id  INTEGER NOT NULL REFERENCES {schema}.events(id) ON DELETE CASCADE,
+                    entity_id INTEGER NOT NULL REFERENCES {schema}.entities(id) ON DELETE CASCADE,
+                    PRIMARY KEY (event_id, entity_id)
+                )
+            """)
+
+            # ── SAG: extraction tracking ──
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.extraction_status (
+                    chunk_id   INTEGER PRIMARY KEY REFERENCES {schema}.chunks(id) ON DELETE CASCADE,
+                    extracted  BOOLEAN NOT NULL DEFAULT false,
+                    extracted_at TIMESTAMPTZ,
+                    error      TEXT
+                )
+            """)
+
             cur.execute(
                 "INSERT INTO kb_registry (name, description) VALUES (%s, %s)",
                 (safe_name, description),
@@ -184,20 +236,18 @@ def add_chunks(kb_name: str, chunks: list[dict]) -> dict:
     """Add chunks with optional auto-embedding."""
     schema = f"{SCHEMA_PREFIX}{kb_name}"
 
-    for c in chunks:
+    # Batch embed all chunk contents first
+    try:
+        from embed_client import embed_batch
+        texts = [c.get("content", "")[:2048] for c in chunks]
+        vectors = embed_batch(texts)
+    except Exception:
+        vectors = [None] * len(chunks)
+
+    for c, vector in zip(chunks, vectors):
         content = c.get("content", "")
         title = c.get("title", "")
 
-        # Embed the chunk content
-        vector = None
-        embed_text_for_store = content[:2048]  # clip to avoid over-long input
-        try:
-            from embed_client import embed_text
-            vector = embed_text(embed_text_for_store)
-        except Exception:
-            vector = None
-
-        # Insert with embed_vec if available
         if vector is not None:
             _execute(
                 f"""INSERT INTO {schema}.chunks (title, content, source, tags, media_url, media_type, embed_vec)
@@ -590,3 +640,548 @@ def _parse_tags(tags_val) -> list[str]:
         except (json.JSONDecodeError, TypeError):
             return []
     return []
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 1 — SAG: Event/Entity Extraction & Retrieval
+# ═══════════════════════════════════════════════════════════════════
+#
+# Reference: SAG paper (arXiv 2606.15971) — Yuchao Wu et al., Zleap AI
+# https://arxiv.org/abs/2606.15971  (MIT License)
+#
+
+SAG_ENTITY_TYPES = [
+    "time", "location", "person", "organization", "group",
+    "topic", "work", "product", "action", "metric", "label",
+]
+
+
+def ensure_sag_schema(kb_name: str):
+    """Create SAG tables on an existing KB that predates Phase 1.
+
+    Idempotent — safe to run on any KB at any time.
+    """
+    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.events (
+                    id         SERIAL PRIMARY KEY,
+                    chunk_id   INTEGER NOT NULL REFERENCES {schema}.chunks(id) ON DELETE CASCADE,
+                    event_text TEXT NOT NULL,
+                    embed_vec  vector(1024)
+                )
+            """)
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{schema}_event_embed ON {schema}.events "
+                f"USING hnsw (embed_vec vector_cosine_ops)"
+            )
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.entities (
+                    id          SERIAL PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    entity_type TEXT NOT NULL DEFAULT 'label',
+                    embed_vec   vector(1024),
+                    UNIQUE(name)
+                )
+            """)
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{schema}_entity_embed ON {schema}.entities "
+                f"USING hnsw (embed_vec vector_cosine_ops)"
+            )
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.event_entities (
+                    event_id  INTEGER NOT NULL REFERENCES {schema}.events(id) ON DELETE CASCADE,
+                    entity_id INTEGER NOT NULL REFERENCES {schema}.entities(id) ON DELETE CASCADE,
+                    PRIMARY KEY (event_id, entity_id)
+                )
+            """)
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.extraction_status (
+                    chunk_id   INTEGER PRIMARY KEY REFERENCES {schema}.chunks(id) ON DELETE CASCADE,
+                    extracted  BOOLEAN NOT NULL DEFAULT false,
+                    extracted_at TIMESTAMPTZ,
+                    error      TEXT
+                )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def extract_chunks(kb_name: str) -> dict:
+    """Extract events and entities from unprocessed chunks in a KB.
+
+    Finds chunks where extraction_status.extracted = false,
+    calls LLM to extract 1 event + N entities per chunk,
+    and writes results to events/entities/event_entities tables.
+    """
+    # Ensure SAG schema exists on this KB
+    ensure_sag_schema(kb_name)
+    schema = f"{SCHEMA_PREFIX}{kb_name}"
+
+    # Find chunks that need extraction
+    try:
+        rows = _fetch_all(f"""
+            SELECT c.id, c.content, c.title
+            FROM {schema}.chunks c
+            LEFT JOIN {schema}.extraction_status es ON c.id = es.chunk_id
+            WHERE es.extracted IS DISTINCT FROM true
+            ORDER BY c.id
+        """)
+    except Exception as e:
+        return {"error": f"Cannot query chunks: {e}"}
+
+    if not rows:
+        return {"success": True, "extracted": 0, "message": "All chunks already extracted"}
+
+    total = len(rows)
+    success_count = 0
+    fail_count = 0
+
+    for chunk_id, content, title in rows:
+        try:
+            result = _extract_single_chunk(chunk_id, content, title or "", schema)
+            if result.get("success"):
+                success_count += 1
+            else:
+                fail_count += 1
+                _mark_extraction(schema, chunk_id, error=result.get("error", "Unknown"))
+        except Exception as e:
+            fail_count += 1
+            _mark_extraction(schema, chunk_id, error=str(e))
+
+    return {
+        "success": True,
+        "kb": kb_name,
+        "total": total,
+        "extracted": success_count,
+        "failed": fail_count,
+    }
+
+
+def _extract_single_chunk(chunk_id: int, content: str, title: str,
+                          schema: str) -> dict:
+    """Extract event + entities from one chunk using LLM, then persist."""
+    text = f"{title}\n\n{content}" if title else content
+    text = text[:3000]
+
+    extracted = _call_llm_extract(text)
+    if extracted is None:
+        event_text = text.split(".")[0].strip() or text[:200]
+        entities = []
+    else:
+        event_text = extracted.get("event", text[:200])
+        entities = extracted.get("entities", [])
+
+    # Embed event
+    event_vector = None
+    try:
+        from embed_client import embed_text
+        event_vector = embed_text(event_text)
+    except Exception:
+        pass
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            if event_vector is not None:
+                cur.execute(
+                    f"INSERT INTO {schema}.events (chunk_id, event_text, embed_vec) "
+                    f"VALUES (%s, %s, %s::vector) RETURNING id",
+                    (chunk_id, event_text, str(event_vector)),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {schema}.events (chunk_id, event_text) "
+                    f"VALUES (%s, %s) RETURNING id",
+                    (chunk_id, event_text),
+                )
+            event_id = cur.fetchone()[0]
+
+            for ent in entities:
+                ent_name = ent.get("name", "").strip()
+                ent_type = ent.get("type", "label")
+                if not ent_name or ent_type not in SAG_ENTITY_TYPES:
+                    ent_type = "label"
+                cur.execute(
+                    f"INSERT INTO {schema}.entities (name, entity_type) "
+                    f"VALUES (%s, %s) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name "
+                    f"RETURNING id",
+                    (ent_name, ent_type),
+                )
+                entity_id = cur.fetchone()[0]
+                cur.execute(
+                    f"INSERT INTO {schema}.event_entities (event_id, entity_id) "
+                    f"VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (event_id, entity_id),
+                )
+
+            from datetime import datetime, timezone
+            cur.execute(
+                f"INSERT INTO {schema}.extraction_status "
+                f"(chunk_id, extracted, extracted_at) VALUES (%s, true, %s) "
+                f"ON CONFLICT (chunk_id) DO UPDATE SET extracted = true, "
+                f"extracted_at = %s, error = NULL",
+                (chunk_id, datetime.now(timezone.utc), datetime.now(timezone.utc)),
+            )
+        conn.commit()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+    return {"success": True, "event": event_text, "entities": len(entities)}
+
+
+def _call_llm_extract(text: str) -> dict | None:
+    """Call LLM to extract event + entities (SAG paper §3.2)."""
+    api_key = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_API_KEY") or ""
+    base_url = (
+        os.environ.get("ASTRA_LLM_BASE_URL")
+        or os.environ.get("ASTRA_EMBED_BASE_URL")
+        or "https://api.siliconflow.cn/v1"
+    )
+    model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
+    if not api_key or not base_url:
+        return None
+
+    truncated = text[:2500]
+    prompt = (
+        'Extract one event and entities from the following text.\n'
+        'Entity types: time, location, person, organization, group, '
+        'topic, work, product, action, metric, label.\n'
+        'Respond ONLY with this exact JSON format, no other text:\n'
+        '{"event": "concise summary of the core content", '
+        '"entities": [{"name": "entity name", "type": "entity type"}]}\n'
+        'Text:\n' + truncated
+    )
+    try:
+        payload = json.dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You extract structured knowledge from text. Output ONLY valid JSON. No explanations, no markdown."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.01,
+            "max_tokens": 1024,
+        }).encode("utf-8")
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        import urllib.request as _ur
+        req = _ur.Request(url, data=payload, headers=headers, method="POST")
+        with _ur.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+        raw_content = result["choices"][0]["message"]["content"]
+    except Exception:
+        return None
+    return _parse_extraction_json(raw_content)
+
+
+def _parse_extraction_json(content: str) -> dict | None:
+    """Parse LLM JSON output with json_repair + field normalisation.
+
+    Handles: malformed JSON, wrong field names (value/label/entity → name),
+    missing fields, truncation, extra text before/after JSON.
+    """
+    try:
+        from json_repair import repair_json
+        parsed = json.loads(repair_json(content))
+    except Exception:
+        try:
+            import re as _re
+            brace = _re.search(r"\{.*\}", content, _re.DOTALL)
+            if brace:
+                parsed = json.loads(brace.group())
+            else:
+                return None
+        except Exception:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    # Normalise entities key
+    if "entities" not in parsed and "entity" in parsed:
+        parsed["entities"] = parsed.pop("entity")
+    # Normalise entity field names
+    entities = parsed.get("entities", [])
+    if isinstance(entities, list):
+        normalised = []
+        for ent in entities:
+            if not isinstance(ent, dict):
+                if isinstance(ent, str):
+                    normalised.append({"name": ent, "type": "label"})
+                continue
+            if "name" not in ent:
+                for alt in ("value", "label", "entity", "keyword", "content", "text"):
+                    if alt in ent:
+                        ent["name"] = ent.pop(alt)
+                        break
+            if "name" in ent:
+                normalised.append(ent)
+        parsed["entities"] = normalised
+    elif isinstance(entities, str):
+        parsed["entities"] = [{"name": entities, "type": "label"}]
+    return parsed if parsed.get("event") else None
+
+
+def _mark_extraction(schema: str, chunk_id: int, error: str | None = None):
+    """Mark a chunk's extraction status."""
+    from datetime import datetime, timezone
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO {schema}.extraction_status "
+                f"(chunk_id, extracted, extracted_at, error) "
+                f"VALUES (%s, %s, %s, %s) ON CONFLICT (chunk_id) DO UPDATE "
+                f"SET extracted = EXCLUDED.extracted, error = EXCLUDED.error",
+                (chunk_id, bool(error), datetime.now(timezone.utc) if not error else None, error),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── SAG Retrieval ────────────────────────────────────────────────
+
+
+def search_sag_fast(query: str, kb_names: list[str] | None = None,
+                    limit: int = 10) -> list[dict]:
+    """SAG Fast mode: event vector search -> chunks (§3.3 Path B)."""
+    try:
+        from embed_client import embed_text
+        query_vector = embed_text(query)
+    except Exception:
+        query_vector = None
+
+    if query_vector is None:
+        return search_kbs_hybrid(query, kb_names, limit)
+
+    targets = kb_names or get_enabled_kb_names()
+    if not targets:
+        return []
+
+    parts = []
+    for kb in targets:
+        schema = f"{SCHEMA_PREFIX}{kb}"
+        parts.append(f"""
+            SELECT c.id AS chunk_id, '{kb}' AS kb_name, c.title, c.content,
+                   c.source, c.tags::text AS tags,
+                   1 - (e.embed_vec <=> %s::vector) AS score
+            FROM {schema}.events e
+            JOIN {schema}.chunks c ON c.id = e.chunk_id
+            WHERE e.embed_vec IS NOT NULL
+        """)
+
+    if not parts:
+        return []
+
+    vec_str = str(query_vector)
+    union_sql = " UNION ALL ".join(parts)
+    full_sql = f"""
+        SELECT * FROM ({union_sql}) AS combined
+        WHERE combined.score IS NOT NULL
+        ORDER BY combined.score DESC
+        LIMIT %s
+    """
+    params = [vec_str] * len(targets) + [limit]
+    try:
+        rows = _fetch_all(full_sql, params)
+    except Exception:
+        return search_kbs_hybrid(query, kb_names, limit)
+
+    results = []
+    for row in rows:
+        results.append({
+            "chunk_id": row[0],
+            "kb": row[1],
+            "title": row[2],
+            "content": row[3],
+            "score": round(float(row[6]), 4),
+            "source": row[4],
+            "tags": _parse_tags(row[5]),
+        })
+    return results
+
+
+def search_sag_precise(query: str, kb_names: list[str] | None = None,
+                       limit: int = 10) -> list[dict]:
+    """SAG Precise mode: entity-guided + SQL JOIN expansion (§3.3-3.4).
+
+    Steps:
+      1. LLM extracts key entities from query
+      2. Entity vector similarity -> related entities
+      3. SQL JOIN: entities -> event_entities -> events -> chunks
+      4. Merge with direct event vector results (sag_fast)
+      5. Sort by score, dedup, return top K
+    """
+    targets = kb_names or get_enabled_kb_names()
+    if not targets:
+        return []
+
+    try:
+        from embed_client import embed_text
+        query_vector = embed_text(query)
+    except Exception:
+        query_vector = None
+
+    query_entities = _extract_query_entities(query)
+
+    seed_chunks: dict[int, dict] = {}
+    if query_entities and query_vector is not None:
+        for ent in query_entities:
+            ent_name = ent.get("name", "").strip()
+            if not ent_name:
+                continue
+            ent_vector = embed_text(ent_name)
+            if ent_vector is None:
+                continue
+
+            for kb in targets:
+                schema = f"{SCHEMA_PREFIX}{kb}"
+                try:
+                    entity_rows = _fetch_all(f"""
+                        SELECT e.id, e.name,
+                               1 - (e.embed_vec <=> %s::vector) AS score
+                        FROM {schema}.entities e
+                        WHERE e.embed_vec IS NOT NULL
+                          AND 1 - (e.embed_vec <=> %s::vector) > 0.85
+                        ORDER BY score DESC
+                        LIMIT 10
+                    """, (str(ent_vector), str(ent_vector)))
+                except Exception:
+                    continue
+
+                for erow in entity_rows:
+                    eid = erow[0]
+                    try:
+                        chunk_rows = _fetch_all(f"""
+                            SELECT DISTINCT c.id, c.title, c.content, c.source, c.tags::text,
+                                   1 - (ev.embed_vec <=> %s::vector) AS score
+                            FROM {schema}.event_entities ee
+                            JOIN {schema}.events ev ON ev.id = ee.event_id
+                            JOIN {schema}.chunks c ON c.id = ev.chunk_id
+                            WHERE ee.entity_id = %s
+                              AND ev.embed_vec IS NOT NULL
+                            ORDER BY score DESC
+                            LIMIT 5
+                        """, (str(query_vector), eid))
+                    except Exception:
+                        continue
+
+                    for cr in chunk_rows:
+                        if cr[0] not in seed_chunks:
+                            seed_chunks[cr[0]] = {
+                                "chunk_id": cr[0],
+                                "kb": kb,
+                                "title": cr[1],
+                                "content": cr[2],
+                                "score": round(float(cr[5]), 4),
+                                "source": cr[3],
+                                "tags": _parse_tags(cr[4]),
+                            }
+
+    # Merge with fast path
+    fast_results = search_sag_fast(query, kb_names, limit)
+    for r in fast_results:
+        cid = r["chunk_id"]
+        if cid in seed_chunks:
+            seed_chunks[cid]["score"] = max(seed_chunks[cid]["score"], r["score"])
+        else:
+            seed_chunks[cid] = r
+
+    sorted_results = sorted(
+        seed_chunks.values(),
+        key=lambda x: x.get("score", 0),
+        reverse=True,
+    )[:limit]
+    return sorted_results
+
+
+def _extract_query_entities(query: str) -> list[dict]:
+    """Extract key entities from a search query (online LLM call, §3.3).
+
+    Falls back to heuristic if LLM unavailable.
+    """
+    api_key = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_API_KEY") or ""
+    base_url = (
+        os.environ.get("ASTRA_LLM_BASE_URL")
+        or os.environ.get("ASTRA_EMBED_BASE_URL")
+        or "https://api.siliconflow.cn/v1"
+    )
+    model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
+
+    if api_key and base_url:
+        prompt = f"""Extract key entities from this search query.
+
+Entity types: time, location, person, organization, group, topic, work, product, action, metric, label
+
+Output JSON only:
+{{"entities": [{{"name": "...", "type": "..."}}]}}
+
+Query: {query}
+"""
+        try:
+            payload = json.dumps({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You extract query entities. Output ONLY valid JSON. No explanations."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.01,
+                "max_tokens": 512,
+            }).encode("utf-8")
+
+            url = f"{base_url.rstrip('/')}/chat/completions"
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+
+            import urllib.request as _ur
+            req = _ur.Request(url, data=payload, headers=headers, method="POST")
+            with _ur.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+
+            raw_content = result["choices"][0]["message"]["content"]
+
+            # Reuse the same parsing logic
+            from json_repair import repair_json
+            import re as _re
+
+            parsed = None
+            try:
+                repaired = repair_json(raw_content)
+                parsed = json.loads(repaired)
+            except Exception:
+                brace = _re.search(r"\{.*\}", raw_content, _re.DOTALL)
+                if brace:
+                    try:
+                        parsed = json.loads(brace.group())
+                    except Exception:
+                        pass
+
+            if isinstance(parsed, dict):
+                if "entities" not in parsed and "entity" in parsed:
+                    parsed["entities"] = parsed.pop("entity")
+                entities = parsed.get("entities", [])
+                if isinstance(entities, list):
+                    normalised = []
+                    for ent in entities:
+                        if not isinstance(ent, dict):
+                            if isinstance(ent, str):
+                                normalised.append({"name": ent, "type": "label"})
+                            continue
+                        if "name" not in ent:
+                            for alt in ("value", "label", "entity", "keyword", "content", "text"):
+                                if alt in ent:
+                                    ent["name"] = ent.pop(alt)
+                                    break
+                        if "name" in ent:
+                            normalised.append(ent)
+                    return normalised
+                elif isinstance(entities, str):
+                    return [{"name": entities, "type": "label"}]
+            return []
+        except Exception:
+            pass
+
+    return [{"name": query, "type": "topic"}]
