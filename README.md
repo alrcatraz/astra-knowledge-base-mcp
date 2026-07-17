@@ -71,7 +71,7 @@ uv run server.py
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `ASTRA_KB_BACKEND` | `postgres` | Backend — PostgreSQL only (SQLite removed) |
+| `ASTRA_KB_BACKEND` | `postgres` | Backend — PostgreSQL only |
 | `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL connection string |
 | `ASTRA_EMBED_BASE_URL` | `https://api.siliconflow.cn/v1` | OpenAI-compatible embedding endpoint |
 | `ASTRA_EMBED_API_KEY` | — | Embedding API key |
@@ -133,7 +133,7 @@ astra-knowledge-base-mcp (Python, uv run)
     │   ├── kb_*.entities       ← SAG entity index (vector(1024))
     │   └── mgmt                ← Operational data (services, health_log, api_keys)
     │
-    └── Embedding cache (SQLite) → embed_cache.db
+    └── Embedding cache (PostgreSQL) → embed_cache table
 ```
 
 Three complimentary retrieval paths:
@@ -157,7 +157,6 @@ See [AGENTS.md](AGENTS.md) for AI-agent-oriented documentation (entry points, wo
 - **PostgreSQL 16+** with **pgvector** — primary data store
 - **psycopg2-binary** — PostgreSQL driver
 - **MarkItDown** — file import (PDF, DOCX, PPTX)
-- **SQLite** (stdlib) — local embedding cache only
 
 ## Retrieval Strategy
 
