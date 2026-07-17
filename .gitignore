@@ -10,11 +10,6 @@ wheels/
 .venv/
 .venv
 
-# Embedding cache (SQLite)
-*.db
-*.db-wal
-*.db-shm
-
 # Code indexing cache (IDE / agent tools)
 .codegraph/
 
