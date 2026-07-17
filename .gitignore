@@ -1,4 +1,4 @@
-# Python-generated files
+# Python build artifacts
 __pycache__/
 *.py[oc]
 build/
@@ -7,29 +7,18 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
 .venv/
+.venv
 
-# SQLite database files (embed cache, local Kb)
+# Embedding cache (SQLite)
 *.db
 *.db-wal
 *.db-shm
 
-# Internal planning and agent docs (generated, not shipped)
-AGENTS.md
-PLAN.md
-plan.md
-planning/
-design/
-notes/
-
-# One-time migration scripts
-scripts/migrate_*.py
-
-# Code indexing cache
+# Code indexing cache (IDE / agent tools)
 .codegraph/
 
-# Environment config (contains API keys)
+# Environment config — contains API keys
 .env
 .env.*
 *.env
