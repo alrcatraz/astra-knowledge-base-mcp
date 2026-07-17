@@ -1,4 +1,4 @@
-# Python-generated files
+# Python build artifacts
 __pycache__/
 *.py[oc]
 build/
@@ -7,14 +7,18 @@ wheels/
 *.egg-info
 
 # Virtual environments
+.venv/
 .venv
 
-# SQLite database files
+# Embedding cache (SQLite)
 *.db
 *.db-wal
 *.db-shm
 
-# Internal design docs
-plan.md
-
+# Code indexing cache (IDE / agent tools)
 .codegraph/
+
+# Environment config — contains API keys
+.env
+.env.*
+*.env
