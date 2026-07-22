@@ -837,14 +837,10 @@ def _extract_single_chunk(chunk_id: int, content: str, title: str,
 
 def _call_llm_extract(text: str) -> dict | None:
     """Call LLM to extract event + entities (SAG paper §3.2)."""
-    api_key = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_API_KEY") or ""
-    base_url = (
-        os.environ.get("ASTRA_LLM_BASE_URL")
-        or os.environ.get("ASTRA_EMBED_BASE_URL")
-        or "https://api.siliconflow.cn/v1"
-    )
+    api_key = os.environ.get("ASTRA_LLM_API_KEY", "")
+    base_url = os.environ.get("ASTRA_LLM_BASE_URL", "")
     model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
-    if not api_key or not base_url:
+    if not base_url:
         return None
 
     truncated = text[:2500]
@@ -1104,15 +1100,11 @@ def _extract_query_entities(query: str) -> list[dict]:
 
     Falls back to heuristic if LLM unavailable.
     """
-    api_key = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_API_KEY") or ""
-    base_url = (
-        os.environ.get("ASTRA_LLM_BASE_URL")
-        or os.environ.get("ASTRA_EMBED_BASE_URL")
-        or "https://api.siliconflow.cn/v1"
-    )
+    api_key = os.environ.get("ASTRA_LLM_API_KEY", "")
+    base_url = os.environ.get("ASTRA_LLM_BASE_URL", "")
     model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
 
-    if api_key and base_url:
+    if base_url:
         prompt = f"""Extract key entities from this search query.
 
 Entity types: time, location, person, organization, group, topic, work, product, action, metric, label

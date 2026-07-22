@@ -73,13 +73,17 @@ uv run server.py
 |:---------|:--------|:------------|
 | `ASTRA_KB_BACKEND` | `postgres` | Backend — PostgreSQL only |
 | `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL connection string |
-| `ASTRA_EMBED_BASE_URL` | `https://api.siliconflow.cn/v1` | OpenAI-compatible embedding endpoint |
-| `ASTRA_EMBED_API_KEY` | — | Embedding API key |
+| `ASTRA_EMBED_BASE_URL` | — (required) | OpenAI-compatible embedding endpoint |
+| `ASTRA_EMBED_API_KEY` | — | Embedding API key (optional for local models) |
 | `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-VL-Embedding-8B` | Embedding model (supports VL for text+image) |
 | `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
-| `ASTRA_LLM_BASE_URL` | `https://api.siliconflow.cn/v1` | LLM endpoint for SAG extraction |
+| `ASTRA_LLM_BASE_URL` | — (required for SAG) | LLM endpoint for event/entity extraction |
 | `ASTRA_LLM_API_KEY` | — | LLM API key |
 | `ASTRA_LLM_MODEL` | `THUDM/GLM-Z1-9B-0414` | LLM model for extraction |
+
+> **No hardcoded provider defaults.** `ASTRA_EMBED_BASE_URL` and `ASTRA_LLM_BASE_URL`
+> must be set explicitly. The old `SILICONFLOW_API_KEY` fallback has been removed —
+> use `ASTRA_EMBED_API_KEY` or `ASTRA_LLM_API_KEY` instead.
 
 ## Usage
 
@@ -182,11 +186,11 @@ Astra Knowledge Base MCP 为 AI Agent 提供基于 **PostgreSQL 16+ + pgvector**
 
 每个知识库是隔离的命名空间，内容引入时自动分块（递归、heading-anchor 或语义切分），通过任意 OpenAI 兼容的端点进行向量化，并建立三种互补的检索路径。
 
-### 配置
+**Minimal setup:**
 
 ```bash
+export ASTRA_EMBED_BASE_URL=https://api.siliconflow.cn/v1
 export ASTRA_EMBED_API_KEY=sk-...
-export ASTRA_KB_PG_DSN=dbname=astra_kb user=postgres host=/run/postgresql
 uv run server.py
 ```
 

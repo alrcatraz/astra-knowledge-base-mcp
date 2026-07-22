@@ -1,7 +1,7 @@
 [project]
 name = "astra-knowledge-base-mcp"
-version = "1.1.0"
-description = "SQLite-backed knowledge base MCP server for AI agents"
+version = "1.2.0"
+description = "PostgreSQL-based knowledge base MCP server for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -98,11 +98,11 @@ uv run server.py              # start MCP server
 ```
 
 **Environment variables — see [README](README.md#configuration).**
+**Minimal setup:**
 
-Minimal setup for SiliconFlow:
 ```bash
+export ASTRA_EMBED_BASE_URL=https://api.siliconflow.cn/v1
 export ASTRA_EMBED_API_KEY=sk-...
-export ASTRA_EMBED_MODEL=Qwen/Qwen3-VL-Embedding-8B
 uv run server.py
 ```
 
@@ -125,7 +125,7 @@ ASTRA_KB_BACKEND=postgres uv run python -c "from pg_backend import list_kbs; pri
 Files to modify: `embed_client.py`, `pg_backend.py`, `pyproject.toml`
 
 Key constraints:
-- Embedding cache must survive server restarts (SQLite-backed, one `embed_cache.db` file)
+- Embedding cache must survive server restarts (PostgreSQL-backed, shared `embed_cache` table)
 - Batch embedding (`embed_batch`) is the default — single-item `embed_text` is a thin wrapper
 - All API calls must have exponential backoff retry (429/5xx)
 - No hardcoded provider names — only `ASTRA_EMBED_BASE_URL` + `ASTRA_EMBED_API_KEY` + `ASTRA_EMBED_MODEL`
