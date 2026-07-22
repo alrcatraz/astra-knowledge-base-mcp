@@ -3,7 +3,7 @@
 Supports any OpenAI-compatible embedding endpoint, local or remote.
 Config via environment variables — no hardcoded provider names.
 
-  ASTRA_EMBED_BASE_URL   — OpenAI-compatible base URL (default: https://api.siliconflow.cn/v1)
+  ASTRA_EMBED_BASE_URL   — OpenAI-compatible base URL (required)
   ASTRA_EMBED_API_KEY    — API key (optional: local models may not require one)
   ASTRA_EMBED_MODEL      — Model name (default: Qwen/Qwen3-VL-Embedding-8B)
   ASTRA_EMBED_DIM        — Embedding dimension (default: 1024)
@@ -13,13 +13,10 @@ Cache is stored in PostgreSQL (embed_cache table) — no SQLite dependency.
 Supports VL (vision-language) embedding for text + image mixed input.
 
 Examples:
-  # SiliconFlow — VL embedding (default):
-  ASTRA_EMBED_API_KEY=sk-... ASTRA_EMBED_MODEL=Qwen/Qwen3-VL-Embedding-8B
+  # Remote API — set base URL, API key, and model:
+  ASTRA_EMBED_API_KEY=sk-... ASTRA_EMBED_BASE_URL=https://api.siliconflow.cn/v1 ASTRA_EMBED_MODEL=Qwen/Qwen3-VL-Embedding-8B
 
-  # SiliconFlow — text-only:
-  ASTRA_EMBED_API_KEY=sk-... ASTRA_EMBED_MODEL=Qwen/Qwen3-Embedding-8B
-
-  # Local llama.cpp:
+  # Local llama.cpp (no API key needed):
   ASTRA_EMBED_BASE_URL=http://127.0.0.3:8081/v1
 
   # OpenAI:
@@ -39,12 +36,9 @@ import urllib.request
 
 # ── Configuration (all from env, no hardcoded provider names) ─────
 
-BASE_URL = os.environ.get(
-    "ASTRA_EMBED_BASE_URL",
-    "https://api.siliconflow.cn/v1",
-).rstrip("/")
+BASE_URL = os.environ.get("ASTRA_EMBED_BASE_URL", "").rstrip("/")
 
-API_KEY = os.environ.get("ASTRA_EMBED_API_KEY") or os.environ.get("SILICONFLOW_API_KEY") or ""
+API_KEY = os.environ.get("ASTRA_EMBED_API_KEY", "")
 MODEL = os.environ.get("ASTRA_EMBED_MODEL", "Qwen/Qwen3-VL-Embedding-8B")
 DIM = int(os.environ.get("ASTRA_EMBED_DIM", "1024"))
 
