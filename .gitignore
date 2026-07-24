@@ -12,6 +12,12 @@ wheels/
 
 # Code indexing cache (IDE / agent tools)
 .codegraph/
+.graphlint/
+
+# IDE
+.idea/
+.vscode/
+*.swp
 
 # Environment config — contains API keys
 .env

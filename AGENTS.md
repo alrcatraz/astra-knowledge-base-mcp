@@ -42,8 +42,17 @@ astra-knowledge-base-mcp/
 │   ├── __init__.py
 │   ├── extractor.py          # LLM-based event/entity extraction
 │   └── search.py             # SAG retrieval pipeline
+├── docs/
+│   └── kb-wiki-interop.md    # Two-layer interop reference doc
 ├── scripts/
-│   └── run.sh                # Startup script
+│   ├── run.sh                # Startup script
+│   ├── wiki-kb-sync.sh       # One-click wiki → KB sync script
+│   └── classify-input.sh     # Input classification — detect wiki vs doc stack vs single file, handle archives
+├── templates/
+│   └── kb-wiki-page.md       # KB-optimised wiki page template
+├── skills/                   # Skills for AI agents (symlinked from ~/)
+│   └── knowledge-base-interop/
+│       └── SKILL.md          # Two-layer interop skill
 ├── AGENTS.md                 # This file
 ├── PLAN.md                   # Long-term development roadmap (read before starting work)
 ├── README.md
@@ -66,6 +75,36 @@ kb_search → dispatch:
   sag_fast — event vectors → chunks (direct semantic)
   sag_precise — query entities → SQL JOIN seed → hyperedge expansion → merge
 ```
+
+---
+
+## LLM Wiki Interop
+
+Astra KB is the **retrieval layer** for AI agents. The **LLM Wiki** is the
+curation layer for humans. The two work together via three pipelines
+documented in the `knowledge-base-interop` skill.
+
+**When to load:** `skill_view('knowledge-base-interop')`
+
+**Pipeline overview:**
+
+| Pipeline | Direction | When |
+|----------|-----------|------|
+| Source → Wiki → KB | Layer 1 → Layer 2 | New information needs curation |
+| KB → Wiki | Layer 2 → Layer 1 | Valuable search result found |
+| Batch sync | Layer 1 → Layer 2 | Wiki had many updates |
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `docs/kb-wiki-interop.md` | Detailed reference doc |
+| `scripts/wiki-kb-sync.sh` | One-click sync script |
+| `templates/kb-wiki-page.md` | Page template with `kb_sync` frontmatter |
+| `skills/knowledge-base-interop/SKILL.md` | Skill for agent workflow |
+
+**Selective sync:** Only pages with `kb_sync: true` in frontmatter are
+exported to Astra KB. See the `knowledge-base-interop` skill for details.
 
 ---
 
