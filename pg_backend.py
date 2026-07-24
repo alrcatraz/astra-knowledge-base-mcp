@@ -127,6 +127,10 @@ def create_kb(name: str, description: str = ""):
                 f"CREATE INDEX IF NOT EXISTS idx_{schema}_fts ON {schema}.chunks USING gin(search_vec)"
             )
             cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{schema}_trgm ON {schema}.chunks "
+                f"USING gin (content gin_trgm_ops, title gin_trgm_ops)"
+            )
+            cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{schema}_embed ON {schema}.chunks "
                 f"USING hnsw (embed_vec vector_cosine_ops)"
             )
@@ -282,21 +286,37 @@ def add_chunks(kb_name: str, chunks: list[dict]) -> dict:
 # ── Search ─────────────────────────────────────────────────────────
 
 def search_kbs(query: str, kb_names: list[str] | None = None, limit: int = 10) -> list[dict]:
-    """Full-text search across knowledge bases using PG tsvector."""
+    """Full-text search across knowledge bases using pg_trgm ILIKE (supports CJK)."""
     targets = kb_names or get_enabled_kb_names()
     if not targets or not query.strip():
+        return []
+
+    # Split query into individual tokens for per-term matching
+    tokens = [t.strip() for t in query.split() if t.strip()]
+    if not tokens:
         return []
 
     # Build a UNION ALL query across targeted KBs
     parts = []
     for kb in targets:
         schema = f"{SCHEMA_PREFIX}{kb}"
+
+        # Build per-token ILIKE conditions
+        like_clauses = " OR ".join(
+            f"c.content ILIKE concat('%%', %s, '%%') OR c.title ILIKE concat('%%', %s, '%%')"
+            for _ in tokens
+        )
+        # Per-token similarity: GREATEST across all tokens (matches any-token ILIKE logic)
+        sim_clauses = ", ".join(
+            f"similarity(c.content, %s)" for _ in tokens
+        )
+
         parts.append(f"""
             SELECT c.id AS chunk_id, '{kb}' AS kb_name, c.title, c.content,
                    c.source, c.tags::text AS tags, c.media_url, c.media_type,
-                   ts_rank(c.search_vec, plainto_tsquery('simple', %s)) AS score
+                   GREATEST({sim_clauses}) AS score
             FROM {schema}.chunks c
-            WHERE c.search_vec @@ plainto_tsquery('simple', %s)
+            WHERE ({like_clauses})
         """)
 
     if not parts:
@@ -305,15 +325,18 @@ def search_kbs(query: str, kb_names: list[str] | None = None, limit: int = 10) -
     union_sql = " UNION ALL ".join(parts)
     full_sql = f"""
         SELECT * FROM ({union_sql}) AS combined
-        WHERE combined.score > 0
+        WHERE combined.score > 0.005
         ORDER BY combined.score DESC
         LIMIT %s
     """
 
-    # Parameters: for each part, (query, query); final LIMIT
+    # Parameters per KB: token(sim) × tokens, then token(content_ILIKE) + token(title_ILIKE) × tokens
     params = []
     for _ in targets:
-        params.extend([query, query])
+        for t in tokens:
+            params.append(t)  # for GREATEST(similarity())
+        for t in tokens:
+            params.extend([t, t])  # for ILIKE (content + title)
     params.append(limit)
 
     rows = _fetch_all(full_sql, params)
