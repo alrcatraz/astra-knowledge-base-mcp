@@ -15,12 +15,10 @@ Tools:
   mgmt_query          — Query operational data (services/health_log/api_keys)
 """
 
-import sys
 import json
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 
 from pg_backend import (

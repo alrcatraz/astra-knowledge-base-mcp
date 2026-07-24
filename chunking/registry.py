@@ -60,7 +60,6 @@ def get_chunker_for_kb(kb_name: str, embed_fn: Callable | None = None) -> Chunke
 
 def set_kb_chunker(kb_name: str, chunker_name: str):
     """Persist chunker choice for a KB in mgmt."""
-    import os
     from pg_backend import _execute
 
     if chunker_name not in _registry:
