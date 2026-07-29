@@ -23,3 +23,6 @@ wheels/
 .env
 .env.*
 *.env
+
+# Hermes skill symlinks
+skills/
