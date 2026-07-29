@@ -345,6 +345,77 @@ async def main():
         )
 
 
+async def main_http(host: str, port: int):
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    import uvicorn
+
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await server.run(
+                streams[0],
+                streams[1],
+                InitializationOptions(
+                    server_name="astra-knowledge-base",
+                    server_version="1.0.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
+                ),
+            )
+
+    async def handle_messages(request):
+        """Handle POST messages with Connection: close to prevent client connection reuse."""
+        async def send_with_close(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                has_connection = any(
+                    k.lower() == b"connection" for k, _ in headers
+                )
+                if not has_connection:
+                    headers.append((b"connection", b"close"))
+                message["headers"] = headers
+            await request._send(message)
+
+        await sse.handle_post_message(
+            request.scope, request.receive, send_with_close
+        )
+
+    app = Starlette(
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Route("/messages/", endpoint=handle_messages, methods=["POST"]),
+        ]
+    )
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server_inst = uvicorn.Server(config)
+    print(f"Astra KB MCP SSE: http://{host}:{port}/sse", flush=True)
+    await server_inst.serve()
+
+
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Astra Knowledge Base MCP Server")
+    parser.add_argument(
+        "--http", action="store_true", help="Run in SSE/HTTP mode"
+    )
+    parser.add_argument("--port", type=int, default=3003, help="HTTP port")
+    parser.add_argument(
+        "--host", type=str, default="127.0.0.1", help="HTTP host"
+    )
+    args = parser.parse_args()
+
     import anyio
-    anyio.run(main)
+
+    if args.http:
+        anyio.run(main_http, args.host, args.port)
+    else:
+        anyio.run(main)
