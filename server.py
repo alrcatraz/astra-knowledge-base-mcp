@@ -348,10 +348,19 @@ async def main():
 async def main_http(host: str, port: int):
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
+    from starlette.responses import Response
     from starlette.routing import Route
     import uvicorn
 
     sse = SseServerTransport("/messages/")
+
+    class _AlreadySentResponse(Response):
+        """Handler already sent the ASGI response via request._send; this
+        marker prevents starlette's request_response wrapper from re-sending
+        (starlette >=1.0 raises TypeError when the endpoint returns None)."""
+
+        async def __call__(self, scope, receive, send):
+            return None
 
     async def handle_sse(request):
         async with sse.connect_sse(
@@ -369,6 +378,7 @@ async def main_http(host: str, port: int):
                     ),
                 ),
             )
+        return _AlreadySentResponse()
 
     async def handle_messages(request):
         """Handle POST messages with Connection: close to prevent client connection reuse."""
@@ -386,6 +396,7 @@ async def main_http(host: str, port: int):
         await sse.handle_post_message(
             request.scope, request.receive, send_with_close
         )
+        return _AlreadySentResponse()
 
     app = Starlette(
         routes=[
