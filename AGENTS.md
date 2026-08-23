@@ -1,7 +1,7 @@
 # astra-knowledge-base-mcp — Agent Guide
 
 For AI agents developing and extending this project.
-Humans can skip to [README](README.md) or [PLAN](PLAN.md).
+Humans can skip to [README](README.md) or [docs/roadmap.md](docs/roadmap.md).
 
 ---
 
@@ -11,7 +11,7 @@ MCP (Model Context Protocol) server for managing multi-tenant knowledge bases.
 Part of [Astra AI Agent Infrastructure](https://github.com/alrcatraz/astra-aiagent-infra).
 
 **Key architectural choices:**
-- **PostgreSQL 16+ with pgvector** is the ONLY backend. SQLite has been removed (dev/prod parity issue).
+- **PostgreSQL 16+ with pgvector** is the single, authoritative backend (keeps dev and prod on identical storage semantics).
 - **Embedding is provider-agnostic**: config via `ASTRA_EMBED_BASE_URL` + `ASTRA_EMBED_API_KEY` + `ASTRA_EMBED_MODEL`. Any OpenAI-compatible `/v1/embeddings` endpoint works — local llama.cpp, SiliconFlow, OpenAI, DeepSeek, etc.
 - **SAG** (SQL-Retrieval Augmented Generation, arxiv 2606.15971, MIT) is the retrieval architecture we are adopting — event-entity indexing + query-time dynamic hyperedges via SQL JOINs.
 - **Search strategies are additive** — new paths (sag_fast, sag_precise) coexist with existing ones (fts, vector, hybrid), exposed through a unified `kb_search` interface.
@@ -42,8 +42,10 @@ astra-knowledge-base-mcp/
 │   ├── __init__.py
 │   ├── extractor.py          # LLM-based event/entity extraction
 │   └── search.py             # SAG retrieval pipeline
-├── docs/
-│   └── kb-wiki-interop.md    # Two-layer interop reference doc
+├── docs/                     # Untracked: roadmap + architecture + interop specs
+│   ├── roadmap.md            # Evolution roadmap (NOT git-tracked)
+│   ├── architecture-guide.md # Retrieval architecture deep reference
+│   └── kb-wiki-interop.md    # Two-layer interop spec
 ├── scripts/
 │   ├── run.sh                # Startup script
 │   ├── wiki-kb-sync.sh       # One-click wiki → KB sync script
@@ -53,8 +55,8 @@ astra-knowledge-base-mcp/
 ├── skills/                   # Skills for AI agents (symlinked from ~/)
 │   └── knowledge-base-interop/
 │       └── SKILL.md          # Two-layer interop skill
-├── AGENTS.md                 # This file
-├── PLAN.md                   # Long-term development roadmap (read before starting work)
+├── AGENTS.md                 # This file (tracked, sanitised)
+├── docs/roadmap.md           # Evolution roadmap (untracked)
 ├── README.md
 ├── pyproject.toml
 └── .venv/                    # Virtual environment (uv-managed)
@@ -112,7 +114,7 @@ exported to Astra KB. See the `knowledge-base-interop` skill for details.
 
 1. **Additive over replacement.** New search strategies don't break old ones. New storage layers don't require data migration (backfill tools are separate).
 
-2. **Testable at every step.** Each Phase/N in PLAN.md should be independently verifiable — either by existing tool output or a dedicated smoke test.
+2. **Testable at every step.** Each Phase/N in [docs/roadmap.md](docs/roadmap.md) should be independently verifiable — either by existing tool output or a dedicated smoke test.
 
 3. **Schema changes are forward-only.** Never drop columns/tables that existing data depends on. Deprecate, don't delete.
 
@@ -132,7 +134,7 @@ exported to Astra KB. See the `knowledge-base-interop` skill for details.
 git clone https://github.com/alrcatraz/astra-knowledge-base-mcp
 cd astra-knowledge-base-mcp
 uv sync                       # install dependencies
-cp .env.example .env          # configure embed API endpoint
+cp config/embed.example config/embed.conf # configure embed endpoint
 uv run server.py              # start MCP server
 ```
 
@@ -184,7 +186,15 @@ Key constraints:
 - LLM prompt for extraction must be versioned (track in `sag/prompts/`)
 - Event/entity vectors reuse same embed pipeline as chunks (same `BASE_URL`, same `MODEL`)
 
-### Phase 2+ — See [PLAN.md](PLAN.md)
+### Phase 2+ — New roadmap
+
+The evolution beyond SAG — **memory provider (conversation → KB)**, **whole-directory
+vectorisation**, optional **`select_context()` RAG injection**, and **live context
+sources** — is documented in [docs/roadmap.md](docs/roadmap.md) (untracked).
+
+> **Sanitisation note:** docs/roadmap.md is NOT git-tracked and may contain
+> internal paths and naming. AGENTS.md itself is tracked and pushed to the
+> public repo — keep this file free of private host names, domains, and IPs.
 
 ---
 
@@ -213,5 +223,5 @@ Key constraints:
 
 - **SAG paper**: https://arxiv.org/abs/2606.15971 — retrieval architecture (MIT)
 - **Zleap-AI SAG (GitHub)**: https://github.com/Zleap-AI/SAG — reference impl (MIT)
-- **PLAN.md**: Long-term development roadmap
-- **Hermes Agent**: https://hermes-agent.nousresearch.com/docs — agent framework
+- **docs/roadmap.md**: Long-term evolution roadmap (untracked — not pushed)
+- **Hermes Context Engine plugins**: https://hermes-agent.nousresearch.com/docs — plugin ABCs & `select_context` contract

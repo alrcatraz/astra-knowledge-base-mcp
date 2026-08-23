@@ -24,6 +24,10 @@ wheels/
 .env.*
 *.env
 
+# Runtime provider config (local endpoints/keys) — private, not published.
+# Public templates live in config/*.example (neutral example ports/hosts).
+config/*.conf
+
 # Planning docs — internal roadmaps, architecture notes, interop specs.
 # NOT pushed to the public repo (may reference private services/hosts).
 docs/

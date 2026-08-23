@@ -9,7 +9,7 @@ Run from the repo root (so ``import pg_backend`` resolves):
 
 Set embed env to the live endpoint first (same as the running MCP server):
 
-    ASTRA_EMBED_BASE_URL=http://127.0.0.1:20128/v1 \
+    ASTRA_EMBED_BASE_URL=http://127.0.0.1:8080/v1 \
     ASTRA_EMBED_MODEL=embedding \
     ASTRA_EMBED_DIM=1024 \
     uv run python3 plugins/memory/astra-kb/test_sync.py

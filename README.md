@@ -46,10 +46,10 @@ uv sync
 ### 3. Configure environment
 
 ```bash
-# Embedding endpoint (any OpenAI-compatible API)
+# Embedding endpoint (any OpenAI-compatible API; a local AI Gate works too)
 export ASTRA_EMBED_BASE_URL=https://api.siliconflow.cn/v1
 export ASTRA_EMBED_API_KEY=sk-...
-export ASTRA_EMBED_MODEL=Qwen/Qwen3-VL-Embedding-8B
+export ASTRA_EMBED_MODEL=embedding
 export ASTRA_EMBED_DIM=1024
 
 # Optional: LLM endpoint for SAG extraction
@@ -75,15 +75,16 @@ uv run server.py
 | `ASTRA_KB_PG_DSN` | `dbname=astra_kb user=postgres host=/run/postgresql` | PostgreSQL connection string |
 | `ASTRA_EMBED_BASE_URL` | — (required) | OpenAI-compatible embedding endpoint |
 | `ASTRA_EMBED_API_KEY` | — | Embedding API key (optional for local models) |
-| `ASTRA_EMBED_MODEL` | `Qwen/Qwen3-VL-Embedding-8B` | Embedding model (supports VL for text+image) |
+| `ASTRA_EMBED_MODEL` | `embedding` | Embedding model ID or combo name (resolve to the member model server-side) |
 | `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
 | `ASTRA_LLM_BASE_URL` | — (required for SAG) | LLM endpoint for event/entity extraction |
 | `ASTRA_LLM_API_KEY` | — | LLM API key |
 | `ASTRA_LLM_MODEL` | `auto/best-free` | LLM model for extraction |
 
-> **No hardcoded provider defaults.** `ASTRA_EMBED_BASE_URL` and `ASTRA_LLM_BASE_URL`
-> must be set explicitly. The old `SILICONFLOW_API_KEY` fallback has been removed —
-> use `ASTRA_EMBED_API_KEY` or `ASTRA_LLM_API_KEY` instead.
+> **Provider-agnostic by default.** Both `ASTRA_EMBED_BASE_URL` and `ASTRA_LLM_BASE_URL`
+> accept any OpenAI-compatible endpoint — a local AI Gate or a hosted provider. When a
+> base URL is set, an API key is only needed for non-local endpoints. If both are empty
+> the server starts in a degraded mode (keyword-only retrieval, no embedding).
 
 ## Usage
 

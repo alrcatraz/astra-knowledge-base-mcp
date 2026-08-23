@@ -67,7 +67,7 @@ environment exactly like `pg_backend` / `embed_client`.
 KB (created at runtime, deleted on success). Run from the repo root:
 
 ```bash
-ASTRA_EMBED_BASE_URL=http://127.0.0.1:20128/v1 \
+ASTRA_EMBED_BASE_URL=http://127.0.0.1:8080/v1 \
 ASTRA_EMBED_MODEL=embedding \
 ASTRA_EMBED_DIM=1024 \
 uv run python3 plugins/memory/astra_kb/test_sync.py

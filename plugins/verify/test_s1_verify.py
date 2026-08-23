@@ -6,10 +6,10 @@ production KBs (gloriosa_*).
 
 Run from repo root:
 
-    ASTRA_EMBED_BASE_URL=http://127.0.0.1:20128/v1 \
+    ASTRA_EMBED_BASE_URL=http://127.0.0.1:8080/v1 \
     ASTRA_EMBED_MODEL=embedding \
     ASTRA_EMBED_DIM=1024 \
-    ASTRA_LLM_BASE_URL=http://127.0.0.1:20128/v1 \
+    ASTRA_LLM_BASE_URL=http://127.0.0.1:8080/v1 \
     ASTRA_LLM_MODEL=auto/best-free \
     uv run python3 tests/test_sag_verify.py
 """
