@@ -383,13 +383,15 @@ def search_kbs(query: str, kb_names: list[str] | None = None, limit: int = 10) -
         schema = _schema_for(kb)
 
         # Build per-token ILIKE conditions
+        # NOTE: cast param to ::text so pg8000 can infer the type inside concat/ILIKE
+        # (psycopg2 tolerates this; pg8000 raises 42P18 otherwise).
         like_clauses = " OR ".join(
-            f"c.content ILIKE concat('%%', %s, '%%') OR c.title ILIKE concat('%%', %s, '%%')"
+            f"c.content ILIKE concat('%%', %s::text, '%%') OR c.title ILIKE concat('%%', %s::text, '%%')"
             for _ in tokens
         )
         # Per-token similarity: GREATEST across all tokens (matches any-token ILIKE logic)
         sim_clauses = ", ".join(
-            f"similarity(c.content, %s)" for _ in tokens
+            f"similarity(c.content, %s::text)" for _ in tokens
         )
 
         parts.append(f"""
