@@ -23,3 +23,7 @@ wheels/
 .env
 .env.*
 *.env
+
+# Planning docs — internal roadmaps, architecture notes, interop specs.
+# NOT pushed to the public repo (may reference private services/hosts).
+docs/
