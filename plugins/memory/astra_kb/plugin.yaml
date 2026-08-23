@@ -1,0 +1,5 @@
+name: astra_kb
+version: 0.1.0
+description: "Astra Knowledge Base memory provider — sink conversation turns into a pgvector knowledge base and recall them with semantic search."
+hooks:
+  - on_session_end

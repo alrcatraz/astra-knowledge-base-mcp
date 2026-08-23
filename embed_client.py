@@ -33,14 +33,48 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
-# ── Configuration (all from env, no hardcoded provider names) ─────
+# ── Configuration (env → config/embed.conf → defaults) ────────────────
 
-BASE_URL = os.environ.get("ASTRA_EMBED_BASE_URL", "").rstrip("/")
+def _load_embed_conf() -> dict:
+    """Load ``config/embed.conf`` (project-local) as an embed-config fallback.
 
-API_KEY = os.environ.get("ASTRA_EMBED_API_KEY", "")
-MODEL = os.environ.get("ASTRA_EMBED_MODEL", "Qwen/Qwen3-VL-Embedding-8B")
-DIM = int(os.environ.get("ASTRA_EMBED_DIM", "1024"))
+    Read when the caller did not inject ``ASTRA_EMBED_*`` env vars (e.g. the
+    astra-kb Hermes memory provider, which runs inside the Hermes process with
+    no embed env). Values are exposed as env-like overrides only for vars that
+    are NOT already set, preserving the caller's explicit environment as the
+    highest-priority source.
+    """
+    conf_dir = Path(__file__).resolve().parent / "config"
+    conf = conf_dir / "embed.conf"
+    if not conf.exists():
+        return {}
+    out = {}
+    for line in conf.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        out[key.strip()] = val.strip()
+    return out
+
+
+_EMBED_CONF = _load_embed_conf()
+
+
+def _embed_env(name: str, default: str = "") -> str:
+    if name in os.environ:
+        return os.environ[name]
+    if name in _EMBED_CONF:
+        return _EMBED_CONF[name]
+    return default
+
+
+BASE_URL = _embed_env("ASTRA_EMBED_BASE_URL", "").rstrip("/")
+API_KEY = _embed_env("ASTRA_EMBED_API_KEY", "")
+MODEL = _embed_env("ASTRA_EMBED_MODEL", "Qwen/Qwen3-VL-Embedding-8B")
+DIM = int(_embed_env("ASTRA_EMBED_DIM", "1024"))
 
 # ── Embedding cache (PostgreSQL-backed, survives restarts) ────────
 

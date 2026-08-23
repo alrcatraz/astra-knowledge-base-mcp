@@ -55,7 +55,7 @@ export ASTRA_EMBED_DIM=1024
 # Optional: LLM endpoint for SAG extraction
 export ASTRA_LLM_BASE_URL=https://api.siliconflow.cn/v1
 export ASTRA_LLM_API_KEY=sk-...
-export ASTRA_LLM_MODEL=THUDM/GLM-Z1-9B-0414
+export ASTRA_LLM_MODEL=auto/best-free
 
 # PostgreSQL connection
 export ASTRA_KB_PG_DSN=dbname=astra_kb user=postgres host=/run/postgresql
@@ -79,7 +79,7 @@ uv run server.py
 | `ASTRA_EMBED_DIM` | `1024` | Embedding vector dimension |
 | `ASTRA_LLM_BASE_URL` | — (required for SAG) | LLM endpoint for event/entity extraction |
 | `ASTRA_LLM_API_KEY` | — | LLM API key |
-| `ASTRA_LLM_MODEL` | `THUDM/GLM-Z1-9B-0414` | LLM model for extraction |
+| `ASTRA_LLM_MODEL` | `auto/best-free` | LLM model for extraction |
 
 > **No hardcoded provider defaults.** `ASTRA_EMBED_BASE_URL` and `ASTRA_LLM_BASE_URL`
 > must be set explicitly. The old `SILICONFLOW_API_KEY` fallback has been removed —

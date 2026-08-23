@@ -75,7 +75,7 @@ def sync_file(rel_path):
     env = os.environ.copy()
     env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
     env.setdefault('ASTRA_EMBED_API_KEY', '')
-    env.setdefault('ASTRA_EMBED_MODEL', 'siliconflow-cn/Qwen/Qwen3-VL-Embedding-8B')
+    env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
     env.setdefault('ASTRA_EMBED_DIM', '1024')
 
     # subprocess.run with shlex.quote prevents shell injection
@@ -119,7 +119,7 @@ def main():
         env = os.environ.copy()
         env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
         env.setdefault('ASTRA_EMBED_API_KEY', '')
-        env.setdefault('ASTRA_EMBED_MODEL', 'siliconflow-cn/Qwen/Qwen3-VL-Embedding-8B')
+        env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
         env.setdefault('ASTRA_EMBED_DIM', '1024')
         cmd = (
             f'python3 {shlex.quote(SYNC_SCRIPT)} '
