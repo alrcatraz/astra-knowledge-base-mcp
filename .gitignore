@@ -28,6 +28,9 @@ wheels/
 # Public templates live in config/*.example (neutral example ports/hosts).
 config/*.conf
 
+# Backup files — never commit
+*.bak
+
 # Planning docs — internal roadmaps, architecture notes, interop specs.
 # NOT pushed to the public repo (may reference private services/hosts).
 docs/
