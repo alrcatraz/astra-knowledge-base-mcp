@@ -1,0 +1,18 @@
+%% Blockquote styling: gray left bar + light background via mdframed
+\usepackage{xcolor}
+\usepackage[framemethod=default]{mdframed}
+
+\mdfdefinestyle{quoteStyle}{%
+  leftline=true,
+  linecolor=gray!55,
+  linewidth=2.5pt,
+  backgroundcolor=gray!05,
+  innertopmargin=4pt,
+  innerbottommargin=4pt,
+  innerleftmargin=8pt,
+  innerrightmargin=6pt,
+  skipabove=6pt,
+  skipbelow=6pt,
+}
+
+\surroundwithmdframed[style=quoteStyle]{quote}

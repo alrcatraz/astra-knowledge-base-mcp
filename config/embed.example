@@ -1,0 +1,14 @@
+# Embedding provider config template — copy to `config/embed.conf` and edit.
+#
+# The AI Gate embedding endpooint is normally a local trusted service, so no
+# API key is needed when BASE_URL points at localhost; for a remote provider
+# uncomment ASTRA_EMBED_API_KEY and fill it in.
+#
+# MODEL is an AI Gate COMBO name (resolves to the member model server-side),
+# NOT a concrete model id — this decouples config from the routed model.
+#
+# Priority at load time: environment variable > this file > built-in default.
+ASTRA_EMBED_BASE_URL=http://127.0.0.1:8080/v1
+ASTRA_EMBED_MODEL=embedding
+ASTRA_EMBED_DIM=1024
+# ASTRA_EMBED_API_KEY=

@@ -2,15 +2,21 @@
 """
 wiki-kb-watch.py — 实时文件监听：Wiki 文件变动 → 自动同步到 Astra KB
 
+自 Phase 3 起，同步逻辑已泛化到 dir-kb-sync.py（任意目录 → 任意 KB）。
+本脚本保留原有监听/去抖/PID/日志与环境变量逻辑，仅把同步子进程指向
+dir-kb-sync.py --dir <WIKI> --kb gloriosa_world --file <rel>。
+原调用方（--daemon / --once）行为不变。
+
 使用 watchdog 库监听 inotify 事件，消除 bash 方括号路径问题。
 """
 
-import os, sys, time, logging, json, atexit, subprocess, shlex
+import os, sys, time, logging, atexit, subprocess, shlex
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + '/..')
 
 WIKI = '/home/alrcatraz/Extra/DS425Plus/homes/Alrcatraz/Novels/[世界观] 格利欧萨共和国/wiki'
-SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wiki-kb-sync.py')
+KB_NAME = 'gloriosa_world'
+SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dir-kb-sync.py')
 SYNC_CWD = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIDFILE = '/tmp/wiki-kb-watch.pid'
 LOGFILE = '/tmp/wiki-kb-watch.log'
@@ -46,6 +52,18 @@ def debounce(rel_path):
     return False
 
 
+def _sync_cmd(rel_path):
+    """Build the shell command for a generic-dir sync of one file."""
+    cmd = (
+        f'python3 {shlex.quote(SYNC_SCRIPT)} '
+        f'--dir {shlex.quote(WIKI)} '
+        f'--kb {shlex.quote(KB_NAME)} '
+        f'--file {shlex.quote(rel_path)} '
+        f'>> {shlex.quote(LOGFILE)} 2>&1'
+    )
+    return cmd
+
+
 def sync_file(rel_path):
     if debounce(rel_path):
         return
@@ -55,17 +73,13 @@ def sync_file(rel_path):
 
     # Build env dict (provider-agnostic: only ASTRA_EMBED_* vars)
     env = os.environ.copy()
-    env.setdefault('ASTRA_EMBED_BASE_URL', 'https://api.siliconflow.cn/v1')
+    env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
     env.setdefault('ASTRA_EMBED_API_KEY', '')
-    env.setdefault('ASTRA_EMBED_MODEL', 'Qwen/Qwen3-VL-Embedding-8B')
+    env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
     env.setdefault('ASTRA_EMBED_DIM', '1024')
 
     # subprocess.run with shlex.quote prevents shell injection
-    cmd = (
-        f'python3 {shlex.quote(SYNC_SCRIPT)} '
-        f'--file {shlex.quote(rel_path)} '
-        f'>> {shlex.quote(LOGFILE)} 2>&1'
-    )
+    cmd = _sync_cmd(rel_path)
     ret = subprocess.run(cmd, shell=True, cwd=SYNC_CWD, env=env).returncode
 
     if ret == 0:
@@ -103,11 +117,16 @@ def main():
     if args.once:
         log.info('Running initial sync (--once)...')
         env = os.environ.copy()
-        env.setdefault('ASTRA_EMBED_BASE_URL', 'https://api.siliconflow.cn/v1')
+        env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
         env.setdefault('ASTRA_EMBED_API_KEY', '')
-        env.setdefault('ASTRA_EMBED_MODEL', 'Qwen/Qwen3-VL-Embedding-8B')
+        env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
         env.setdefault('ASTRA_EMBED_DIM', '1024')
-        cmd = f'python3 {shlex.quote(SYNC_SCRIPT)} >> {shlex.quote(LOGFILE)} 2>&1'
+        cmd = (
+            f'python3 {shlex.quote(SYNC_SCRIPT)} '
+            f'--dir {shlex.quote(WIKI)} '
+            f'--kb {shlex.quote(KB_NAME)} '
+            f'>> {shlex.quote(LOGFILE)} 2>&1'
+        )
         ret = subprocess.run(cmd, shell=True, cwd=SYNC_CWD, env=env).returncode
         log.info(f'Sync complete (exit={ret})')
         return

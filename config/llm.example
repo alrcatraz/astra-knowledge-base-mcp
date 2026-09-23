@@ -1,0 +1,14 @@
+# LLM provider config template — copy to `config/llm.conf` and edit.
+#
+# Used by the SAG event/entity extraction step. BASE_URL normally points at a
+# local trusted AI Gate (no API key needed on localhost); set ASTRA_LLM_API_KEY
+# for a remote provider.
+#
+# MODEL is an AI Gate COMBO name. `auto/best-free` routes to the best free
+# model for the request — a good fit for extraction, which benefits from a
+# stable, high-quality model. Avoid plumbing a concrete model id here.
+#
+# Priority at load time: environment variable > this file > built-in default.
+ASTRA_LLM_BASE_URL=http://127.0.0.1:8080/v1
+ASTRA_LLM_MODEL=auto/best-free
+# ASTRA_LLM_API_KEY=

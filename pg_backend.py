@@ -11,6 +11,7 @@ Activate by setting env: ASTRA_KB_BACKEND=postgres
 import json
 import os
 import re
+from pathlib import Path
 
 # PG DSN: use Unix socket peer auth (postgres user) by default
 PG_DSN = os.environ.get(
@@ -20,11 +21,91 @@ PG_DSN = os.environ.get(
 SCHEMA_PREFIX = "kb_"
 
 
+def _schema_for(name: str) -> str:
+    """Derive a safe schema name from a KB name (hyphens/spaces → underscore).
+
+    Single source of truth for the KB-name → schema mapping so every
+    create/add/search/delete path builds the same identifier. Prevents
+    SQL syntax errors from unquoted hyphens (e.g. ``astra-kb`` → ``kb_astra_kb``).
+    """
+    safe = re.sub(r"[^a-z0-9_]+", "_", (name or "").strip().lower())
+    return f"{SCHEMA_PREFIX}{safe}"
+
+
+# ── Project-local config (config/*.conf) — env → .conf → default ──
+
+def _load_conf_file(filename: str) -> dict:
+    """Load ``config/<filename>`` as a key=value override map (ENV-style).
+
+    Highest-priority remains the environment; these files only supply values
+    for vars the caller did not export. Keeps provider endpoint/model config
+    in the repo (single source of truth) instead of scattered hardcoded
+    defaults.
+    """
+    conf = Path(__file__).resolve().parent / "config" / filename
+    if not conf.exists():
+        return {}
+    out = {}
+    try:
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            out[key.strip()] = val.strip()
+    except OSError:
+        return {}
+    return out
+
+
+_LLM_CONF = _load_conf_file("llm.conf")
+
+
+def _llm_env(name: str, default: str = "") -> str:
+    if name in os.environ:
+        return os.environ[name]
+    if name in _LLM_CONF:
+        return _LLM_CONF[name]
+    return default
+
+
+def _pg8000_connect(dsn: str):
+    """Connect via pg8000 (pure-Python pg driver, no system C deps).
+
+    Falls back from psycopg2's socket DSN to pg8000's TCP-only dialect, so a
+    psycopg2-less runtime (e.g. the Hermes system python) can still reach PG.
+    """
+    import pg8000
+
+    if dsn.startswith(("postgres://", "postgresql://")):
+        return pg8000.connect(dsn)
+    # psycopg2-style "k=v k=v" DSN → pg8000 kwargs.
+    fields = {k: v for k, v in (kv.split("=", 1) for kv in dsn.split() if "=" in kv)}
+    host = fields.get("host")
+    if host and "run/postgresql" in host:  # socket → pg8000 cannot dial; use loopback TCP
+        host = "127.0.0.1"
+    kwargs = {
+        "database": fields.get("dbname"),
+        "user": fields.get("user"),
+        "host": host,
+        "port": int(fields["port"]) if fields.get("port") else 5432,
+        "password": fields.get("password"),
+        "timeout": 10,
+    }
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    return pg8000.connect(**kwargs)
+
+
 # ── Connection ────────────────────────────────────────────────────
 
 def get_conn():
-    import psycopg2
-    return psycopg2.connect(PG_DSN)
+    try:
+        import psycopg2
+
+        return psycopg2.connect(PG_DSN)
+    except ImportError:
+        # psycopg2 absent (e.g. Hermes system python) → pure-Python pg8000.
+        return _pg8000_connect(PG_DSN)
 
 
 def _fetch_all(sql, params=None):
@@ -90,11 +171,11 @@ def list_kbs():
 
 
 def create_kb(name: str, description: str = ""):
-    safe_name = name.strip().lower().replace(" ", "_")
+    safe_name = re.sub(r"[^a-z0-9_]+", "_", name.strip().lower())
     if not safe_name:
         return {"error": "Name cannot be empty"}
 
-    schema = f"{SCHEMA_PREFIX}{safe_name}"
+    schema = _schema_for(safe_name)
 
     existing = _fetch_one(
         "SELECT 1 FROM kb_registry WHERE name = %s", (safe_name,)
@@ -197,7 +278,7 @@ def create_kb(name: str, description: str = ""):
 
 
 def delete_kb(name: str):
-    schema = f"{SCHEMA_PREFIX}{name}"
+    schema = _schema_for(name)
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -238,7 +319,7 @@ def get_enabled_kb_names() -> list[str]:
 
 def add_chunks(kb_name: str, chunks: list[dict]) -> dict:
     """Add chunks with optional auto-embedding."""
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
 
     # Batch embed all chunk contents first
     try:
@@ -299,16 +380,18 @@ def search_kbs(query: str, kb_names: list[str] | None = None, limit: int = 10) -
     # Build a UNION ALL query across targeted KBs
     parts = []
     for kb in targets:
-        schema = f"{SCHEMA_PREFIX}{kb}"
+        schema = _schema_for(kb)
 
         # Build per-token ILIKE conditions
+        # NOTE: cast param to ::text so pg8000 can infer the type inside concat/ILIKE
+        # (psycopg2 tolerates this; pg8000 raises 42P18 otherwise).
         like_clauses = " OR ".join(
-            f"c.content ILIKE concat('%%', %s, '%%') OR c.title ILIKE concat('%%', %s, '%%')"
+            f"c.content ILIKE concat('%%', %s::text, '%%') OR c.title ILIKE concat('%%', %s::text, '%%')"
             for _ in tokens
         )
         # Per-token similarity: GREATEST across all tokens (matches any-token ILIKE logic)
         sim_clauses = ", ".join(
-            f"similarity(c.content, %s)" for _ in tokens
+            f"similarity(c.content, %s::text)" for _ in tokens
         )
 
         parts.append(f"""
@@ -386,7 +469,7 @@ def search_kbs_vector(query: str, kb_names: list[str] | None = None,
     # Build UNION ALL with cosine distance
     parts = []
     for kb in targets:
-        schema = f"{SCHEMA_PREFIX}{kb}"
+        schema = _schema_for(kb)
         parts.append(f"""
             SELECT c.id AS chunk_id, '{kb}' AS kb_name, c.title, c.content,
                    c.source, c.tags::text AS tags, c.media_url, c.media_type,
@@ -475,7 +558,7 @@ def search_kbs_hybrid(query: str, kb_names: list[str] | None = None,
 
 def list_chunks(kb_name: str, limit: int = 50, offset: int = 0):
     """List chunks in a knowledge base, ordered by created_at desc."""
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
     try:
         rows = _fetch_all(
             f"""SELECT id, title, LEFT(content, 200) AS content_preview,
@@ -513,7 +596,7 @@ def update_chunk(kb_name: str, chunk_id: int, mode: str = "replace",
     mode="replace": overwrite content entirely.
     mode="append":   append new content after a newline.
     """
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
     sets = []
     params = []
 
@@ -583,7 +666,7 @@ def update_chunk(kb_name: str, chunk_id: int, mode: str = "replace",
 
 def delete_chunk(kb_name: str, chunk_id: int) -> dict:
     """Delete a single chunk by id."""
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
     try:
         cur = _execute(
             f"DELETE FROM {schema}.chunks WHERE id = %s",
@@ -684,7 +767,7 @@ def ensure_sag_schema(kb_name: str):
 
     Idempotent — safe to run on any KB at any time.
     """
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -742,7 +825,7 @@ def extract_chunks(kb_name: str) -> dict:
     """
     # Ensure SAG schema exists on this KB
     ensure_sag_schema(kb_name)
-    schema = f"{SCHEMA_PREFIX}{kb_name}"
+    schema = _schema_for(kb_name)
 
     # Find chunks that need extraction
     try:
@@ -860,9 +943,9 @@ def _extract_single_chunk(chunk_id: int, content: str, title: str,
 
 def _call_llm_extract(text: str) -> dict | None:
     """Call LLM to extract event + entities (SAG paper §3.2)."""
-    api_key = os.environ.get("ASTRA_LLM_API_KEY", "")
-    base_url = os.environ.get("ASTRA_LLM_BASE_URL", "")
-    model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
+    api_key = _llm_env("ASTRA_LLM_API_KEY", "")
+    base_url = _llm_env("ASTRA_LLM_BASE_URL", "")
+    model = _llm_env("ASTRA_LLM_MODEL", "auto/best-free")
     if not base_url:
         return None
 
@@ -885,6 +968,8 @@ def _call_llm_extract(text: str) -> dict | None:
             ],
             "temperature": 0.01,
             "max_tokens": 1024,
+            # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+            "stream": False,
         }).encode("utf-8")
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
@@ -983,7 +1068,7 @@ def search_sag_fast(query: str, kb_names: list[str] | None = None,
 
     parts = []
     for kb in targets:
-        schema = f"{SCHEMA_PREFIX}{kb}"
+        schema = _schema_for(kb)
         parts.append(f"""
             SELECT c.id AS chunk_id, '{kb}' AS kb_name, c.title, c.content,
                    c.source, c.tags::text AS tags,
@@ -1058,7 +1143,7 @@ def search_sag_precise(query: str, kb_names: list[str] | None = None,
                 continue
 
             for kb in targets:
-                schema = f"{SCHEMA_PREFIX}{kb}"
+                schema = _schema_for(kb)
                 try:
                     entity_rows = _fetch_all(f"""
                         SELECT e.id, e.name,
@@ -1123,9 +1208,9 @@ def _extract_query_entities(query: str) -> list[dict]:
 
     Falls back to heuristic if LLM unavailable.
     """
-    api_key = os.environ.get("ASTRA_LLM_API_KEY", "")
-    base_url = os.environ.get("ASTRA_LLM_BASE_URL", "")
-    model = os.environ.get("ASTRA_LLM_MODEL", "THUDM/GLM-Z1-9B-0414")
+    api_key = _llm_env("ASTRA_LLM_API_KEY", "")
+    base_url = _llm_env("ASTRA_LLM_BASE_URL", "")
+    model = _llm_env("ASTRA_LLM_MODEL", "auto/best-free")
 
     if base_url:
         prompt = f"""Extract key entities from this search query.
@@ -1146,6 +1231,8 @@ Query: {query}
                 ],
                 "temperature": 0.01,
                 "max_tokens": 512,
+                # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+                "stream": False,
             }).encode("utf-8")
 
             url = f"{base_url.rstrip('/')}/chat/completions"
