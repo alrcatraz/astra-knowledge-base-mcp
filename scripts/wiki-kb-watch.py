@@ -71,11 +71,11 @@ def sync_file(rel_path):
         return
     log.info(f'📝  {rel_path}')
 
-    # Build env dict (provider-agnostic: only ASTRA_EMBED_* vars)
+    # Build env dict (provider-agnostic: only ASTRA_EMBED_* vars).
+    # No endpoint/model defaults are shipped — the caller supplies them via
+    # environment or config/embed.conf (L2 discipline).
     env = os.environ.copy()
-    env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
     env.setdefault('ASTRA_EMBED_API_KEY', '')
-    env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
     env.setdefault('ASTRA_EMBED_DIM', '1024')
 
     # subprocess.run with shlex.quote prevents shell injection
@@ -117,9 +117,7 @@ def main():
     if args.once:
         log.info('Running initial sync (--once)...')
         env = os.environ.copy()
-        env.setdefault('ASTRA_EMBED_BASE_URL', 'http://127.0.0.1:20128/v1')
         env.setdefault('ASTRA_EMBED_API_KEY', '')
-        env.setdefault('ASTRA_EMBED_MODEL', 'embedding')
         env.setdefault('ASTRA_EMBED_DIM', '1024')
         cmd = (
             f'python3 {shlex.quote(SYNC_SCRIPT)} '

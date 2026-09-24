@@ -64,7 +64,7 @@ Two-layer knowledge architecture: **LLM Wiki** (curation layer, for humans) +
 - **LLM Wiki** — ask the user where to create it; do not default to `~/wiki`
 - **Astra KB** — MCP server with PostgreSQL backend (`scripts/run.sh`)
 - **Embedding API** — `ASTRA_EMBED_BASE_URL` + `ASTRA_EMBED_API_KEY` +
-  `ASTRA_EMBED_MODEL` (default: SiliconFlow Qwen/Qwen3-VL-Embedding-8B)
+  `ASTRA_EMBED_MODEL` (no built-in default — set via env or config/embed.conf)
 - **MarkItDown MCP** — document conversion
 - **watchdog** (`pip install watchdog`) — for realtime file watching
 

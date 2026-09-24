@@ -27,6 +27,7 @@ wheels/
 # Runtime provider config (local endpoints/keys) — private, not published.
 # Public templates live in config/*.example (neutral example ports/hosts).
 config/*.conf
+scripts/*.conf
 
 # Backup files — never commit
 *.bak
