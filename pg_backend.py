@@ -968,7 +968,7 @@ def _call_llm_extract(text: str) -> dict | None:
             ],
             "temperature": 0.01,
             "max_tokens": 1024,
-            # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+            # the AI-gateway may stream by default; force one JSON reply.
             "stream": False,
         }).encode("utf-8")
         url = f"{base_url.rstrip('/')}/chat/completions"
@@ -1231,7 +1231,7 @@ Query: {query}
                 ],
                 "temperature": 0.01,
                 "max_tokens": 512,
-                # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+                # the AI-gateway may stream by default; force one JSON reply.
                 "stream": False,
             }).encode("utf-8")
 
@@ -1287,3 +1287,35 @@ Query: {query}
             pass
 
     return [{"name": query, "type": "topic"}]
+
+
+# ── Optional rerank stage (opt-in, fail-open) ───────────────────────
+
+
+def rerank_results(query: str, results: list[dict],
+                   limit: int | None = None) -> list[dict]:
+    """Re-score coarse candidates with a joint-pass reranker.
+
+    Strictly opt-in: disabled when ``config/rerank.conf`` / ASTRA_RERANK_*
+    env are unset, and fail-open on any transport/parse error — the caller's
+    coarse order survives untouched in both cases.  Each surviving result
+    gains a ``rerank_score`` field when re-scoring succeeds.
+    """
+    if not results:
+        return results
+    try:
+        from rerank_client import is_enabled, rerank
+        if not is_enabled():
+            return results[:limit] if limit else results
+        scored = rerank(query, [r.get("content", "") for r in results])
+        if scored is None:
+            return results[:limit] if limit else results
+        out: list[dict] = []
+        for s in scored:
+            if 0 <= s["index"] < len(results):
+                r = dict(results[s["index"]])
+                r["rerank_score"] = round(s["relevance_score"], 4)
+                out.append(r)
+        return out[:limit] if limit else out
+    except Exception:
+        return results[:limit] if limit else results

@@ -1,0 +1,18 @@
+# Rerank provider config template — copy to `config/rerank.conf` and edit.
+#
+# OPTIONAL stage: when this file (or the ASTRA_RERANK_* env vars) is absent,
+# kb_search keeps its coarse retrieval order untouched.  Reranking is strictly
+# opt-in and fail-open — a down reranker never breaks a search.
+#
+# BASE_URL points at any Cohere-compatible /rerank endpoint (an AI Gate root
+# works when it proxies rerank).  No API key is needed for local trusted
+# gateways; set ASTRA_RERANK_API_KEY for hosted providers.
+#
+# MODEL must be the exact form the gateway accepts (e.g. a concrete
+# provider/model id — verify against the gateway's error message if unsure).
+#
+# Priority at load time: environment variable > this file > disabled.
+ASTRA_RERANK_BASE_URL=http://127.0.0.1:8080/v1
+ASTRA_RERANK_MODEL=
+ASTRA_RERANK_TIMEOUT=10
+# ASTRA_RERANK_API_KEY=

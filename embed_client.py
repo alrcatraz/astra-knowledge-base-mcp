@@ -5,7 +5,9 @@ Config via environment variables — no hardcoded provider names.
 
   ASTRA_EMBED_BASE_URL   — OpenAI-compatible base URL (required)
   ASTRA_EMBED_API_KEY    — API key (optional: local models may not require one)
-  ASTRA_EMBED_MODEL      — Model name (default: Qwen/Qwen3-VL-Embedding-8B)
+  ASTRA_EMBED_MODEL      — Model name (no default; must be provided by env or
+                           config/embed.conf — an AI Gate combo name such as
+                           `embedding` keeps the config provider-agnostic)
   ASTRA_EMBED_DIM        — Embedding dimension (default: 1024)
 
 Cache is stored in PostgreSQL (embed_cache table) — no SQLite dependency.
@@ -73,7 +75,7 @@ def _embed_env(name: str, default: str = "") -> str:
 
 BASE_URL = _embed_env("ASTRA_EMBED_BASE_URL", "").rstrip("/")
 API_KEY = _embed_env("ASTRA_EMBED_API_KEY", "")
-MODEL = _embed_env("ASTRA_EMBED_MODEL", "Qwen/Qwen3-VL-Embedding-8B")
+MODEL = _embed_env("ASTRA_EMBED_MODEL", "")
 DIM = int(_embed_env("ASTRA_EMBED_DIM", "1024"))
 
 # ── Embedding cache (PostgreSQL-backed, survives restarts) ────────
@@ -235,6 +237,10 @@ def _call_api(texts: list[str], retries: int = 3) -> list[list[float] | None]:
 
     Uses OpenAI-compatible /v1/embeddings format.
     """
+    if not BASE_URL or not MODEL:
+        print("[embed] ASTRA_EMBED_BASE_URL/ASTRA_EMBED_MODEL unset — "
+              "embedding disabled (no defaults are shipped)", file=sys.stderr)
+        return [None] * len(texts)
     for attempt in range(retries):
         try:
             _pace()
