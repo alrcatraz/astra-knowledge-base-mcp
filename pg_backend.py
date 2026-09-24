@@ -968,7 +968,7 @@ def _call_llm_extract(text: str) -> dict | None:
             ],
             "temperature": 0.01,
             "max_tokens": 1024,
-            # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+            # the AI-gateway may stream by default; force one JSON reply.
             "stream": False,
         }).encode("utf-8")
         url = f"{base_url.rstrip('/')}/chat/completions"
@@ -1231,7 +1231,7 @@ Query: {query}
                 ],
                 "temperature": 0.01,
                 "max_tokens": 512,
-                # aigate (OmniRoute 20128) streams by default; force one JSON reply.
+                # the AI-gateway may stream by default; force one JSON reply.
                 "stream": False,
             }).encode("utf-8")
 

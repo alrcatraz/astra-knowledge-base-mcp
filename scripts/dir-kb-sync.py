@@ -17,7 +17,7 @@ Usage:
   图片（.jpg/.jpeg/.png）默认不纳入扫描。仅在配置里显式启用时才纳入：
   - kb-sync.conf（默认路径），或 --conf <path>（最高优先）> env KB_SYNC_CONF > 默认 scripts/kb-sync.conf。
   - 启用需 ocr.enabled: true 且 ocr.model 非空（如 "ocr"=AI Gate OCR combo，
-    或 "deepseek-ai/DeepSeek-OCR"）。base_url 空=默认 http://127.0.0.1:20128/v1；
+    或 "deepseek-ai/DeepSeek-OCR"）。base_url 空=未配置（无内置默认，需显式填写）；
     api_key 空=回落 env ASTRA_LLM_API_KEY（再空则无鉴权）。
   - 启用后图片经 AI Gate /chat/completions 的 OCR 模型（image base64 + 提取文本
     prompt）→ 识别文本作为该文件 body 入库。--dry-run 下不真正调 AI，仅打印
@@ -71,7 +71,8 @@ CATEGORIES = {
 # ── 可选 OCR（默认全关）────────────────────────────────────────────
 # 配置优先级：--conf <path> > env KB_SYNC_CONF > 默认 scripts/kb-sync.conf。
 # 配置文件缺失 / 字段缺失 → 一律默认（enabled=False），不报错。
-DEFAULT_OCR_BASE_URL = 'http://127.0.0.1:20128/v1'
+# OCR base_url 无内置默认值：启用 OCR 必须在 conf 中显式填写端点（L2 纪律）。
+DEFAULT_OCR_BASE_URL = ''
 DEFAULT_CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'kb-sync.conf')
 _PAGE_EXTS = ('.md', '.txt')
 _EXCLUDE_BASENAMES = ('index.md', 'index.txt')
@@ -141,6 +142,9 @@ def ocr_image(fp, cfg):
     取不到则记警告并返回空串（不让一个坏图打断整轮同步）。
     """
     base_url = (cfg.get('base_url') or DEFAULT_OCR_BASE_URL).rstrip('/')
+    if not base_url:
+        print(f'  [warn] OCR 启用但未配置 base_url（无内置默认），跳过 {fp}')
+        return ''
     model = cfg['model']
     api_key = cfg.get('api_key', '')
     ext = os.path.splitext(fp)[1].lower().lstrip('.') or 'png'
