@@ -112,6 +112,48 @@ exported to Astra KB. See the `knowledge-base-interop` skill for details.
 
 ---
 
+## Repository Governance (branch model & disclosure levels)
+
+### Three-tier branch flow (astra-vcs-assist branch-protection model)
+
+```
+feat/* · fix/* ──merge──▶ development ──PR only──▶ main ──tag──▶ release
+```
+
+- Feature/fix branches are cut from `development` and merged back with a plain
+  `git merge --no-ff` (solo repo; PR optional).
+- `main` advances **only via pull request** from `development` (Gitea branch
+  protection enforces this — direct pushes are rejected). Release tags land on
+  `main`.
+- Throwaway PR-head branches (`release/vX.Y.Z`) are deleted after merge.
+
+### Disclosure levels (tower-model §1.1 ladder)
+
+Remote declarations for this repository:
+
+```
+gitea  : L2   (private forge, sanitised content — no machine-specific config)
+origin : L2 mirror-of gitea   (GitHub, same slice ref-by-ref: main + development + tags)
+dev copy (~/.hermes… ~/Projects/astra) : L0 authority (may hold untracked config/*.conf)
+```
+
+Both remotes sit at the **same level**: there is no separate public
+projection branch. Consequence: sanitisation is a property of the codebase
+itself, carried by every commit that reaches any remote —
+
+- **No shipped defaults for environment-bound values**: endpoints, API keys,
+  concrete model ids must come from env or `config/*.conf` (untracked;
+  templates in `config/*.example`). Rerank/embed clients degrade fail-open
+  when unconfigured.
+- Runtime configs (`config/*.conf`, `scripts/kb-sync.conf`) stay untracked.
+- Before each release, grep the tree for internal hosts/ports/credentials.
+
+When a remote's `main` is protected, publish a release by pushing the merge
+commit as `release/vX.Y.Z`, opening the PR, merging via API/web, then deleting
+the head branch.
+
+---
+
 ## Development Principles
 
 1. **Additive over replacement.** New search strategies don't break old ones. New storage layers don't require data migration (backfill tools are separate).
