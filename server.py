@@ -28,18 +28,30 @@ from pg_backend import (
     list_chunks, update_chunk, delete_chunk,
     mgmt_list_tables, mgmt_query,
     search_sag_fast, search_sag_precise, extract_chunks,
+    rerank_results,
 )
 
-def _search(query, kb_names=None, limit=10, search_mode="hybrid"):
+def _search(query, kb_names=None, limit=10, search_mode="hybrid", rerank=False):
+    """Dispatch a coarse retrieval mode; optionally re-rank the candidates.
+
+    ``rerank=True`` widens the coarse pool and lets the configured joint-pass
+    reranker (see rerank_client) pick the final order — opt-in per call, and
+    fail-open: disabled/unreachable rerankers keep the coarse order.
+    """
+    pool = max(limit * 2, 10) if rerank else limit
     if search_mode == "vector":
-        return search_kbs_vector(query, kb_names, limit)
+        results = search_kbs_vector(query, kb_names, pool)
     elif search_mode == "fts":
-        return pg_search(query, kb_names, limit)
+        results = pg_search(query, kb_names, pool)
     elif search_mode == "sag_fast":
-        return search_sag_fast(query, kb_names, limit)
+        results = search_sag_fast(query, kb_names, pool)
     elif search_mode == "sag_precise":
-        return search_sag_precise(query, kb_names, limit)
-    return search_kbs_hybrid(query, kb_names, limit)
+        results = search_sag_precise(query, kb_names, pool)
+    else:
+        results = search_kbs_hybrid(query, kb_names, pool)
+    if rerank:
+        return rerank_results(query, results, limit)
+    return results[:limit]
 
 server = Server("astra-knowledge-base")
 
@@ -130,6 +142,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "enum": ["hybrid", "fts", "vector", "sag_fast", "sag_precise"],
                         "description": "Search mode: hybrid (default), fts, vector, sag_fast (event vectors), sag_precise (entity-guided)",
                         "default": "hybrid",
+                    },
+                    "rerank": {
+                        "type": "boolean",
+                        "description": "Optional joint-pass re-ranking of candidates (requires reranker config; fail-open to coarse order when unset/unavailable)",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -279,6 +296,7 @@ async def handle_call_tool(
                 kb_names=arguments.get("kb_names"),
                 limit=arguments.get("limit", 10),
                 search_mode=arguments.get("search_mode", "hybrid"),
+                rerank=arguments.get("rerank", False),
             )
             return [types.TextContent(type="text", text=json.dumps(results, indent=2, ensure_ascii=False))]
 
