@@ -104,7 +104,13 @@ chunking strategy selection logic and implementation details.
 
 ---
 
-## Pitfalls
+## Hermes 记忆插件（memory provider）生命周期与 PM 依赖
+
+见 `references/hermes-memory-plugin.md`：必须继承 MemoryProvider ABC（否则
+`on_session_end` 等可选 hook 在会话边界刷 AttributeError）；turn 缓冲到会话边界
+批量 sink；initialize 对死库 fail-closed；Python 驱动走 plugin.yaml
+`python_dependencies` + PM 轨道（勿手动 pip，update 会丢）；打包树缺 `pm/uv.lock`
+的补法。
 
 ## 生产部署/后端（父 NUC10 PG 模式实战，2026-08-16）
 
@@ -144,7 +150,9 @@ secret 在 sudo 上下文创建 → 属主 root → 运行用户 `$(cat)` 静默
 
 **验证顺序**：先 `create_kb` 建 `kb_<safe>` → 查 chunks 有向量 → 再 `search_kbs_vector` 回 1+ 条。缺向量=embed env 问题；SQL 报错=identifier 问题。
 
+---
 
+## Pitfalls
 
 1. **`kb_add` content is auto-SAG-extracted** — no need to call `kb_extract` separately.
 2. **`kb_rechunk` is destructive** — replaces ALL chunks in the KB. Back up with `kb_export` first.
