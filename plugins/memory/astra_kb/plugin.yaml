@@ -1,5 +1,7 @@
 name: astra_kb
-version: 0.1.0
+version: 0.2.0
 description: "Astra Knowledge Base memory provider — sink conversation turns into a pgvector knowledge base and recall them with semantic search."
 hooks:
   - on_session_end
+python_dependencies:
+  - "pg8000>=1.30,<2"
