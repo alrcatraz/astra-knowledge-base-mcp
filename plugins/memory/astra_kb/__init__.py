@@ -37,6 +37,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+try:  # in-tree / normal Hermes runtime
+    from agent.memory_provider import MemoryProvider
+except ImportError:  # standalone test harness without Hermes core installed
+    class MemoryProvider:  # type: ignore[no-redef]
+        pass
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -90,8 +96,14 @@ def _resolve_project_root(cfg: dict) -> Path | None:
 # MemoryProvider implementation
 # ---------------------------------------------------------------------------
 
-class AstraKBProvider:
-    """Memory provider that sinks turns into an Astra Knowledge Base."""
+class AstraKBProvider(MemoryProvider):
+    """Memory provider that sinks turns into an Astra Knowledge Base.
+
+    Subclasses ``agent.memory_provider.MemoryProvider`` so every optional
+    lifecycle hook (``on_session_end``, ``on_session_switch``, ...) keeps the
+    ABC's no-op default instead of raising AttributeError when MemoryManager
+    fires it.
+    """
 
     def __init__(self, config: dict | None = None):
         self._config = config or _load_plugin_config()
@@ -100,6 +112,10 @@ class AstraKBProvider:
         self._kb_name = self._config.get("kb_name", "astra-kb")
         self._session_id = ""
         self._ready = False
+        # Turn buffers sink at the session boundary (on_session_end), not per
+        # turn — sync_turn only appends here. Kept per session so a switch or
+        # reset can't leak one conversation's transcript into another's sink.
+        self._pending: List[Dict[str, Any]] = []
 
     @property
     def name(self) -> str:
@@ -149,7 +165,10 @@ class AstraKBProvider:
             self._ready = False
             return
 
-        # Optional: ensure the target KB exists (test KBs get created here).
+        # Fail CLOSED on a dead database path: without a reachable PG driver +
+        # KB there is nothing to sink into, and pretending otherwise makes
+        # every sync_turn swallow errors in silence (the pre-0.2.0 bug: no
+        # psycopg2/pg8000 in the Hermes venv -> _ready=True -> silent no-op).
         if self._config.get("auto_create_kb", True):
             try:
                 names = {r["name"] for r in pg_backend.list_kbs()}
@@ -157,7 +176,14 @@ class AstraKBProvider:
                     pg_backend.create_kb(self._kb_name, "Astra-KB memory sink")
                     logger.info("astra-kb: created KB '%s'", self._kb_name)
             except Exception as e:
-                logger.warning("astra-kb: KB ensure failed: %s", e)
+                logger.warning(
+                    "astra-kb: KB ensure failed (%s); provider inactive — "
+                    "install a PG driver (pg8000 or psycopg2-binary) in the "
+                    "Hermes environment and check ASTRA_KB_PG_DSN.", e,
+                )
+                self._pg_backend = None
+                self._ready = False
+                return
         self._ready = True
 
     def system_prompt_block(self) -> str:
@@ -177,28 +203,56 @@ class AstraKBProvider:
         session_id: str = "",
         messages: List[Dict[str, Any]] | None = None,
     ) -> None:
-        """Sink a completed turn into the KB (non-blocking intent)."""
-        if not self._ready or not self._pg_backend or not user_content:
+        """Buffer a completed turn; the KB write happens at the session boundary.
+
+        Sinking per-turn meant one embedding + insert round-trip inside every
+        agent turn (and one failure swallowed per turn). Buffering lets
+        ``on_session_end`` do a single batched ``add_chunks`` — the ABC's
+        intended shape ("on_session_end: end-of-session extraction; fires only
+        at real session boundaries, never per-turn").
+        """
+        if not self._ready or not user_content:
             return
+        self._pending.append({
+            "user": user_content,
+            "assistant": assistant_content or "",
+            "session": session_id or self._session_id,
+        })
+
+    def _sink(self, turns: List[Dict[str, Any]]) -> None:
+        """Batch-write buffered turns into the KB. Fail-open: never break the
+        agent loop on an embedding/DB error."""
+        if not turns or not self._ready or not self._pg_backend:
+            return
+        chunks = []
+        for t in turns:
+            src = f"session:{t['session']}"
+            chunks.append({"title": "conversation", "content": t["user"], "source": src})
+            if t["assistant"]:
+                chunks.append({"title": "assistant", "content": t["assistant"], "source": src})
         try:
-            self._pg_backend.add_chunks(
-                self._kb_name,
-                [
-                    {
-                        "title": "conversation",
-                        "content": user_content,
-                        "source": f"session:{session_id or self._session_id}",
-                    },
-                    {
-                        "title": "assistant",
-                        "content": assistant_content or "",
-                        "source": f"session:{session_id or self._session_id}",
-                    },
-                ],
-            )
+            self._pg_backend.add_chunks(self._kb_name, chunks)
         except Exception as e:
             # fail-open: swallowing here must never break the agent turn.
-            logger.debug("astra-kb sync_turn failed (ignored): %s", e)
+            logger.warning("astra-kb sink failed (%d turns dropped): %s", len(turns), e)
+
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        """Flush the buffered turns of the ending session into the KB."""
+        pending, self._pending = self._pending, []
+        self._sink(pending)
+
+    def on_session_switch(
+        self, new_session_id: str, *, parent_session_id: str = "",
+        reset: bool = False, rewound: bool = False, **kwargs,
+    ) -> None:
+        """Rebind session state mid-process (/new, /reset, compression).
+
+        Flush first so a reset can't drop the old conversation's buffer into
+        the new session id, then rebind.
+        """
+        pending, self._pending = self._pending, []
+        self._sink(pending)
+        self._session_id = new_session_id
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [
@@ -237,6 +291,9 @@ class AstraKBProvider:
         return json.dumps({"results": results, "count": len(results)})
 
     def shutdown(self) -> None:
+        # Flush whatever the final session buffered before dropping the backend.
+        pending, self._pending = self._pending, []
+        self._sink(pending)
         self._pg_backend = None
         self._ready = False
 
