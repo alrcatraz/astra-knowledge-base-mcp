@@ -159,3 +159,4 @@ secret 在 sudo 上下文创建 → 属主 root → 运行用户 `$(cat)` 静默
 3. **Tags are text[] arrays** — use `kb_search_by_tags` for tag queries, not `kb_search`.
 4. **SAG requires extraction first** — `kb_extract` or `kb_add` (auto-extract). New KBs are empty until content is added.
 5. **For architecture decisions**, load the [architecture guide](../docs/architecture-guide.md) — it covers RAG/GraphRAG/SAG comparison, embedding infrastructure design, PG vector index selection, and more.
+6. **Rerank stage operating notes** (joint-pass rerank, model choice, evaluation): `references/rerank-stage.md`.
