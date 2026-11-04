@@ -341,3 +341,9 @@ reasoning quality — highest-risk, lowest-certainty item.
 - **SAG paper**: https://arxiv.org/abs/2606.15971 — retrieval architecture (MIT)
 - **Zleap-AI SAG (GitHub)**: https://github.com/Zleap-AI/SAG — reference impl (MIT)
 - **Hermes Context Engine plugins**: https://hermes-agent.nousresearch.com/docs — plugin ABCs & `select_context` contract
+
+## Repository conventions
+
+- **`skills/` is gitignored** (`.gitignore`); the tracked skill files are historical exceptions.
+  A new file under `skills/` needs `git add -f <path>`, otherwise it is skipped silently and the
+  skill's own router ends up pointing at a file that is not in the repository.
